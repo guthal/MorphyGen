@@ -88,7 +88,8 @@ export const POST = async (req: NextRequest) => {
       p_amount: credits,
     })
 
-    return new NextResponse(pdfBuffer, {
+    const body = new Uint8Array(pdfBuffer)
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",

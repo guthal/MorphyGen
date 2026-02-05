@@ -8,7 +8,7 @@ import {
   CreateJobResponseSchema,
   INLINE_INPUT_REF,
   JobSchema,
-} from "../../../../packages/shared/src/schemas/job"
+} from "@/lib/job-schema"
 import { dynamoDocClient, s3Client, sqsClient } from "@/lib/aws"
 import { resolveTenantId } from "@/lib/api-auth"
 import { enforceDailyQuota } from "@/lib/quota"

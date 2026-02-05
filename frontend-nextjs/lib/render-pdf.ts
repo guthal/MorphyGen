@@ -1,6 +1,6 @@
 import chromium from "@sparticuz/chromium";
 import playwright from "playwright-core";
-import type { RenderOptions } from "../../packages/shared/src/schemas/job";
+import type { RenderOptions } from "@/lib/job-schema";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 

@@ -23,7 +23,7 @@ export const renderPdf = async ({
   const browser = await playwright.chromium.launch({
     args: chromium.args,
     executablePath: await chromium.executablePath(),
-    headless: typeof chromium.headless === "boolean" ? chromium.headless : true,
+    headless: true,
   });
 
   try {

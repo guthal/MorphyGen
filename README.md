@@ -47,7 +47,7 @@ Backend:
 3) Define API contract + OpenAPI spec
 4) Implement auth (API keys + HMAC signing) and rate limiting
 5) Set up S3 + DynamoDB schema for jobs/items
-6) Implement single convert flow end-to-end
+6) Implement a single convert flow end-to-end
 7) Implement bulk flow with SQS + worker Lambda (or Step Functions)
 8) Webhook delivery + retry policy
 9) Observability (structured logs, metrics, tracing)
@@ -58,6 +58,6 @@ Backend:
 14) Supabase auth setup (email templates + redirect URLs)
 
 ## Notes
-- Consider asynchronous processing as default for reliability.
+- Consider asynchronous processing as the default for reliability.
 - Set timeouts and memory for PDF rendering carefully.
 - Ensure PDF generation is deterministic across retries.

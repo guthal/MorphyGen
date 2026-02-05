@@ -1,0 +1,12 @@
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+**/out/
+**/cdk.out/
+.vercel/
+.env
+.env.*
+*.log
+.DS_Store
+coverage/

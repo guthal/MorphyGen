@@ -184,6 +184,9 @@ security definer
 as $$
 declare
   sub_record record;
+  cycle_start timestamptz;
+  cycle_end timestamptz;
+  sub_id text;
 begin
   select razorpay_subscription_id, current_period_start, current_period_end
     into sub_record
@@ -193,7 +196,13 @@ begin
   limit 1;
 
   if sub_record.razorpay_subscription_id is null then
-    return;
+    cycle_start := date_trunc('month', now());
+    cycle_end := (date_trunc('month', now()) + interval '1 month');
+    sub_id := 'free';
+  else
+    cycle_start := sub_record.current_period_start;
+    cycle_end := sub_record.current_period_end;
+    sub_id := sub_record.razorpay_subscription_id;
   end if;
 
   insert into credit_usage_cycles (
@@ -205,9 +214,9 @@ begin
   )
   values (
     p_user_id,
-    sub_record.razorpay_subscription_id,
-    sub_record.current_period_start,
-    sub_record.current_period_end,
+    sub_id,
+    cycle_start,
+    cycle_end,
     greatest(p_amount, 0)
   )
   on conflict (subscription_id, period_start, period_end)

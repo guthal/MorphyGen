@@ -1,6 +1,6 @@
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
 import { SendMessageCommand } from "@aws-sdk/client-sqs"
-import { PutCommand } from "@aws-sdk/lib-dynamodb"
+import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
 import { ulid } from "ulid"
 import { NextResponse, type NextRequest } from "next/server"
 import {
@@ -14,8 +14,6 @@ import { resolveTenantId } from "@/lib/api-auth"
 import { enforceDailyQuota } from "@/lib/quota"
 import { recordApiUsage } from "@/lib/api-usage"
 import { recordApiLog } from "@/lib/api-logs"
-import { renderPdf } from "@/lib/render-pdf"
-import { supabaseAdmin } from "@/lib/supabaseAdmin"
 
 export const runtime = "nodejs"
 
@@ -43,6 +41,7 @@ export const POST = async (req: NextRequest) => {
   const isAsync =
     req.nextUrl.searchParams.get("async") === "1" ||
     req.nextUrl.searchParams.get("async") === "true"
+  const isSyncViaWorker = !isAsync
 
   const logAndRespond = async (
     body: Record<string, unknown>,
@@ -69,7 +68,7 @@ export const POST = async (req: NextRequest) => {
 
   const logAndReturnPdf = async (
     pdfBuffer: Buffer,
-    details: { inputType?: string | null } = {}
+    details: { inputType?: string | null; jobId?: string | null } = {}
   ) => {
     await recordApiLog(req, {
       userId: auth.tenantId,
@@ -79,13 +78,8 @@ export const POST = async (req: NextRequest) => {
       statusCode: 200,
       latencyMs: Date.now() - startedAt,
       inputType: details.inputType ?? null,
-      jobId: null,
+      jobId: details.jobId ?? null,
       errorMessage: null,
-    })
-    const credits = Math.max(1, Math.ceil(pdfBuffer.length / (5 * 1024 * 1024)))
-    await supabaseAdmin.rpc("increment_credit_usage_for_user", {
-      p_user_id: auth.tenantId,
-      p_amount: credits,
     })
 
     const body = new Uint8Array(pdfBuffer)
@@ -130,63 +124,6 @@ export const POST = async (req: NextRequest) => {
   }
 
   const inputHtml = typeof raw.inputHtml === "string" ? raw.inputHtml : null
-
-  if (!isAsync) {
-    if (parsed.inputType === "HTML") {
-      if (!inputHtml && parsed.inputRef === INLINE_INPUT_REF) {
-        return logAndRespond(
-          { error: "inputHtml is required when inputRef=INLINE" },
-          400,
-          {
-            inputType: parsed.inputType,
-            errorMessage: "inputHtml is required when inputRef=INLINE",
-          }
-        )
-      }
-    }
-
-    let html: string | null = null
-    if (parsed.inputType === "HTML") {
-      if (inputHtml) {
-        html = inputHtml
-      } else {
-        const key = parsed.inputRef.startsWith(INPUT_PREFIX)
-          ? parsed.inputRef
-          : `${INPUT_PREFIX}${parsed.inputRef}`
-        const obj = await s3Client.send(
-          new GetObjectCommand({
-            Bucket: requireEnv(jobsBucketName, "JOBS_BUCKET_NAME"),
-            Key: key,
-          })
-        )
-        const chunks = []
-        if (!obj.Body) {
-          return logAndRespond({ error: "Missing HTML input" }, 400, {
-            inputType: parsed.inputType,
-            errorMessage: "Missing HTML input",
-          })
-        }
-        for await (const chunk of obj.Body as AsyncIterable<Uint8Array>) {
-          chunks.push(chunk)
-        }
-        html = Buffer.concat(chunks).toString("utf8")
-      }
-    }
-
-    try {
-      const pdfBuffer = await renderPdf({
-        html,
-        url: parsed.inputType === "URL" ? parsed.inputRef : null,
-        options: parsed.options ?? null,
-      })
-      return logAndReturnPdf(pdfBuffer, { inputType: parsed.inputType })
-    } catch (error) {
-      return logAndRespond({ error: "Render failed" }, 500, {
-        inputType: parsed.inputType,
-        errorMessage: String(error),
-      })
-    }
-  }
 
   const jobId = ulid()
   const now = new Date().toISOString()
@@ -262,6 +199,69 @@ export const POST = async (req: NextRequest) => {
   )
 
   const responseBody = CreateJobResponseSchema.parse({ job })
+
+  if (isSyncViaWorker) {
+    const timeoutMs = 25000
+    const pollIntervalMs = 1000
+    const deadline = Date.now() + timeoutMs
+
+    while (Date.now() < deadline) {
+      const result = await dynamoDocClient.send(
+        new GetCommand({
+          TableName: requireEnv(jobsTableName, "JOBS_TABLE_NAME"),
+          Key: { jobId },
+        })
+      )
+
+      const item = result.Item as Record<string, unknown> | undefined
+      if (item?.status === "SUCCEEDED" && item.resultS3Key) {
+        if (item.tenantId !== auth.tenantId) {
+          return logAndRespond({ error: "Not found" }, 404, {
+            jobId,
+            errorMessage: "Not found",
+          })
+        }
+
+        const obj = await s3Client.send(
+          new GetObjectCommand({
+            Bucket: requireEnv(jobsBucketName, "JOBS_BUCKET_NAME"),
+            Key: String(item.resultS3Key),
+          })
+        )
+        if (!obj.Body) {
+          return logAndRespond({ error: "Missing output" }, 500, {
+            jobId,
+            errorMessage: "Missing output",
+          })
+        }
+        const chunks = []
+        for await (const chunk of obj.Body as AsyncIterable<Uint8Array>) {
+          chunks.push(chunk)
+        }
+        const pdfBuffer = Buffer.concat(chunks)
+        return logAndReturnPdf(pdfBuffer, {
+          inputType: job.inputType,
+          jobId,
+        })
+      }
+
+      if (item?.status === "FAILED") {
+        return logAndRespond({ error: "Render failed" }, 500, {
+          inputType: job.inputType,
+          jobId,
+          errorMessage: String(item.errorMessage ?? "Render failed"),
+        })
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+
+    return logAndRespond(
+      { error: "Render in progress", jobId },
+      202,
+      { inputType: job.inputType, jobId }
+    )
+  }
 
   return logAndRespond(responseBody, 201, {
     inputType: job.inputType,

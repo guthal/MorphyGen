@@ -40,7 +40,7 @@ export default function DocsPage() {
             <a href="#html-inline">HTML inline</a>
             <a href="#job-status">Job status</a>
             <a href="#download">Download PDF</a>
-            <a href="#protected">Protected pages</a>
+            <a href="#stream">Sync stream</a>
             <h4>Account</h4>
             <a href="#usage">Usage</a>
             <a href="#logs">Logs</a>
@@ -56,9 +56,10 @@ export default function DocsPage() {
             <p>
               Create an API key in <InlineCode>/dashboard/api-keys</InlineCode>{" "}
               and pass it in the <InlineCode>x-api-key</InlineCode> header. This
-              endpoint queues a render and returns a job id.
+              endpoint waits for the worker and returns a PDF (or a{" "}
+              <InlineCode>202</InlineCode> with a job id if it takes too long).
             </p>
-            <CodeBlock>{`curl -s -X POST http://localhost:3000/api/jobs \\
+            <CodeBlock>{`curl -s -X POST https://morphygen.com/api/jobs \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: <API_KEY>" \\
   -d '{
@@ -80,11 +81,11 @@ export default function DocsPage() {
           <section className="docs-section" id="sync">
             <h3>Sync rendering (default)</h3>
             <p>
-              <InlineCode>POST /api/jobs</InlineCode> returns PDF bytes by
-              default. Use this when you want a single request that saves
-              directly to a local file with <InlineCode>-o</InlineCode>.
+              <InlineCode>POST /api/jobs</InlineCode> waits for the worker and
+              returns PDF bytes by default. If rendering takes too long, you’ll
+              get a <InlineCode>202</InlineCode> with a job id.
             </p>
-            <CodeBlock>{`curl -s -X POST "http://localhost:3000/api/jobs" \\
+            <CodeBlock>{`curl -s -X POST "https://morphygen.com/api/jobs" \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: <API_KEY>" \\
   -d '{
@@ -144,8 +145,24 @@ x-api-key: <API_KEY>`}</CodeBlock>
               download URL. This endpoint redirects to S3, so use{" "}
               <InlineCode>-L</InlineCode> in curl to follow redirects.
             </p>
-            <CodeBlock>{`curl -L http://localhost:3000/api/jobs/<JOB_ID>/pdf \\
+            <CodeBlock>{`curl -L https://morphygen.com/api/jobs/<JOB_ID>/pdf \\
   -H "x-api-key: <API_KEY>" \\
+  -o output.pdf`}</CodeBlock>
+          </section>
+
+          <section className="docs-section" id="stream">
+            <h3>Sync stream alias</h3>
+            <p>
+              <InlineCode>POST /api/jobs/stream</InlineCode> is an alias for the
+              default sync flow and returns PDF bytes directly.
+            </p>
+            <CodeBlock>{`curl -s -X POST "https://morphygen.com/api/jobs/stream" \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: <API_KEY>" \\
+  -d '{
+    "inputType": "URL",
+    "inputRef": "https://example.com"
+  }' \\
   -o output.pdf`}</CodeBlock>
           </section>
 

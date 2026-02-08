@@ -116,6 +116,12 @@ const incrementCreditsForUser = async (userId, amount) => {
   if (!userId || !Number.isFinite(amount) || amount <= 0) return
 
   try {
+    console.log("Credit usage: increment request", {
+      userId,
+      amount,
+      hasSupabaseUrl: Boolean(SUPABASE_URL),
+      hasServiceRoleKey: Boolean(SUPABASE_SERVICE_ROLE_KEY),
+    })
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/rpc/increment_credit_usage_for_user`,
       {
@@ -132,6 +138,8 @@ const incrementCreditsForUser = async (userId, amount) => {
     if (!response.ok) {
       const text = await response.text()
       console.error("Credit usage RPC failed", text)
+    } else {
+      console.log("Credit usage RPC success")
     }
   } catch (error) {
     console.error("Credit usage RPC error", error)

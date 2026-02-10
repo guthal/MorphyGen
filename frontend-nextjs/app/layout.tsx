@@ -8,6 +8,33 @@ export const metadata: Metadata = {
   title: "MorphyGen — Transform documents at scale.",
   description:
     "Transform documents at scale. Reliable API for single and bulk conversions.",
+  keywords: [
+    "html to pdf api",
+    "html to pdf java library",
+    "html to pdf converter api",
+    "convert html to pdf api",
+    "api html to pdf",
+    "html2pdf api",
+    "html to pdf api free",
+    "pdf to html api",
+    "api to convert html to pdf",
+    "html to pdf api open source",
+    "adobe html to pdf api",
+    "html to pdf online api",
+    "online html to pdf converter api",
+    "free html to pdf api",
+    "aspose html to pdf java",
+    "apache poi html to pdf",
+    "api pdf to html",
+    "best html to pdf api",
+    "convert html to pdf api free",
+    "convert html to pdf java api",
+    "convert pdf to html api",
+    "html to pdf api php",
+    "html to pdf rest api",
+    "html to pdf service api",
+    "java api html to pdf",
+  ],
 };
 
 export default function RootLayout({

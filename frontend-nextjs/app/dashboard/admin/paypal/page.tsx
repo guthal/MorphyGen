@@ -10,13 +10,23 @@ const defaultProduct = {
   category: "SOFTWARE",
 };
 
-const defaultPlan = {
+type PlanForm = {
+  productId: string;
+  name: string;
+  description: string;
+  price: string;
+  currency: string;
+  intervalUnit: "DAY" | "WEEK" | "MONTH" | "YEAR";
+  intervalCount: number;
+};
+
+const defaultPlan: PlanForm = {
   productId: "",
   name: "MorphyGen Pro Monthly",
   description: "Monthly subscription",
   price: "29.00",
   currency: "USD",
-  intervalUnit: "MONTH" as const,
+  intervalUnit: "MONTH",
   intervalCount: 1,
 };
 

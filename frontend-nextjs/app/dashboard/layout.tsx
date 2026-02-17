@@ -12,6 +12,7 @@ const navItems = [
   { label: "Invoices", href: "/dashboard/invoices" },
   { label: "Settings", href: "/dashboard/settings" },
   { label: "Documentation", href: "/dashboard/docs" },
+  { label: "Admin", href: "/dashboard/admin/paypal" },
 ];
 
 export default function DashboardLayout({

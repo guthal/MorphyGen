@@ -485,6 +485,159 @@ main {
   font: inherit;
 }
 
+.settings-field select {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  font: inherit;
+  background: #fff;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.settings-checkbox {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.95rem;
+  color: var(--soft-ink);
+}
+
+.settings-checkbox input {
+  width: auto;
+}
+
+.field-hint {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: var(--soft-ink);
+}
+
+.settings-code {
+  background: #0f1419;
+  color: #f8f8f8;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 20, 25, 0.12);
+  font-size: 0.85rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.admin-card-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-top: 16px;
+}
+
+.admin-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  background: #fff;
+  box-shadow: 0 12px 22px rgba(15, 20, 25, 0.06);
+}
+
+.admin-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.admin-card h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.admin-subtitle {
+  margin: 4px 0 0;
+  color: var(--soft-ink);
+  font-size: 0.9rem;
+}
+
+.admin-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #f7f4ef;
+  font-size: 0.8rem;
+  color: #2a2a2a;
+}
+
+.admin-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--soft-ink);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 50;
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  background: #fff;
+  border-radius: 18px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 46px rgba(15, 20, 25, 0.2);
+  display: grid;
+  gap: 16px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-subtitle {
+  margin: 4px 0 0;
+  color: var(--soft-ink);
+}
+
+.modal-approval {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: #fff7f0;
+  font-size: 0.9rem;
+}
+
+.modal-approval a {
+  color: #1a56ff;
+  word-break: break-all;
+}
+
 .settings-divider {
   height: 1px;
   background: #ece6de;

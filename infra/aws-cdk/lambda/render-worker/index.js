@@ -1,16 +1,20 @@
 const { S3Client, GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3")
+const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs")
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb")
 const { DynamoDBDocumentClient, UpdateCommand } = require("@aws-sdk/lib-dynamodb")
+const crypto = require("node:crypto")
 const chromium = require("@sparticuz/chromium")
 const playwright = require("playwright-core")
 
 const s3 = new S3Client({})
+const sqs = new SQSClient({})
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 
 const INPUT_PREFIX = process.env.INPUT_PREFIX || "inputs/"
 const OUTPUT_PREFIX = process.env.OUTPUT_PREFIX || "outputs/"
 const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME
 const JOBS_BUCKET_NAME = process.env.JOBS_BUCKET_NAME
+const WEBHOOK_QUEUE_URL = process.env.WEBHOOK_QUEUE_URL
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
@@ -146,6 +150,30 @@ const incrementCreditsForUser = async (userId, amount) => {
   }
 }
 
+const enqueueWebhookEvent = async ({ tenantId, type, data }) => {
+  if (!WEBHOOK_QUEUE_URL) return
+  if (!tenantId || !type) return
+
+  const event = {
+    id: `evt_${crypto.randomUUID()}`,
+    type,
+    createdAt: new Date().toISOString(),
+    tenantId,
+    data: data || {},
+  }
+
+  try {
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: WEBHOOK_QUEUE_URL,
+        MessageBody: JSON.stringify(event),
+      })
+    )
+  } catch (error) {
+    console.error("Webhook enqueue failed", error)
+  }
+}
+
 exports.handler = async (event) => {
   const records = event?.Records ?? []
 
@@ -169,6 +197,16 @@ exports.handler = async (event) => {
         status: "RUNNING",
         startedAt: now,
         updatedAt: now,
+      })
+
+      await enqueueWebhookEvent({
+        tenantId,
+        type: "job.started",
+        data: {
+          jobId,
+          status: "RUNNING",
+          inputType,
+        },
       })
 
       const html = inputType === "URL" ? null : await fetchHtml(inputType, inputRef)
@@ -199,6 +237,18 @@ exports.handler = async (event) => {
         errorCode: null,
         errorMessage: null,
       })
+
+      await enqueueWebhookEvent({
+        tenantId,
+        type: "job.succeeded",
+        data: {
+          jobId,
+          status: "SUCCEEDED",
+          inputType,
+          resultS3Key: outputKey,
+          resultSizeBytes: pdfBuffer.length,
+        },
+      })
     } catch (error) {
       console.error("Render failed", error)
       await updateJob(jobId, {
@@ -207,6 +257,18 @@ exports.handler = async (event) => {
         errorMessage: String(error?.message || error),
         finishedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+      })
+
+      await enqueueWebhookEvent({
+        tenantId,
+        type: "job.failed",
+        data: {
+          jobId,
+          status: "FAILED",
+          inputType,
+          errorCode: "RENDER_FAILED",
+          errorMessage: String(error?.message || error),
+        },
       })
     }
   }

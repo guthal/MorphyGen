@@ -1,13 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import PayPalSubscribeButton from "@/components/PayPalSubscribeButton";
 import { supabase } from "../../../lib/supabaseClient";
-
-declare global {
-  interface Window {
-    Razorpay?: any;
-  }
-}
 
 type Plan = {
   name: string;
@@ -17,6 +12,7 @@ type Plan = {
   bestFor: string;
   code: string;
   highlight?: boolean;
+  paypalPlanId?: string;
 };
 
 const PLANS: Plan[] = [
@@ -35,6 +31,7 @@ const PLANS: Plan[] = [
     overage: "$0.02 / credit overage",
     bestFor: "Small apps & side projects",
     code: "starter",
+    paypalPlanId: "P-0XY03120C1232724FNGJA4CI",
   },
   {
     name: "Boost ⭐",
@@ -44,6 +41,7 @@ const PLANS: Plan[] = [
     bestFor: "Growing products & startups",
     highlight: true,
     code: "boost",
+    paypalPlanId: "P-1GT40783XG644073RNGJBD7I",
   },
   {
     name: "Growth",
@@ -52,6 +50,7 @@ const PLANS: Plan[] = [
     overage: "$0.0125 / credit overage",
     bestFor: "Production workloads",
     code: "growth",
+    paypalPlanId: "P-4MB78084NA7584847NGJBEFQ",
   },
   {
     name: "Scale 25K",
@@ -109,25 +108,89 @@ const formatCredits = (value: number) =>
 export default function PricingPage() {
   const [consumption, setConsumption] = useState(2500);
   const [notice, setNotice] = useState<string | null>(null);
-  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
+  const [paypalReady, setPaypalReady] = useState(false);
+  const [paypalError, setPaypalError] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [isPaidUser, setIsPaidUser] = useState(false);
+  const [loadingBilling, setLoadingBilling] = useState(true);
+  const [approvalUrl, setApprovalUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      setEmail(data.user?.email ?? null);
+    let isMounted = true;
+    const loadBilling = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) {
+          if (isMounted) {
+            setIsPaidUser(false);
+            setLoadingBilling(false);
+          }
+          return;
+        }
+        const response = await fetch("/api/billing/usage", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!response.ok) {
+          if (isMounted) {
+            setIsPaidUser(false);
+            setLoadingBilling(false);
+          }
+          return;
+        }
+        const body = (await response.json()) as { planCode?: string; status?: string };
+        const paid =
+          Boolean(body.planCode && body.planCode !== "free") &&
+          String(body.status || "").toUpperCase() !== "FREE";
+        if (isMounted) {
+          setIsPaidUser(paid);
+          setLoadingBilling(false);
+        }
+      } catch {
+        if (isMounted) {
+          setIsPaidUser(false);
+          setLoadingBilling(false);
+        }
+      }
     };
-    loadUser();
-  }, []);
+    const loadSdk = async () => {
+      try {
+        const response = await fetch("/api/paypal/client-id");
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to load PayPal client id.");
+        }
+        const body = (await response.json()) as { clientId: string };
+        const scriptId = "paypal-sdk";
+        if (document.getElementById(scriptId)) {
+          if (isMounted) setPaypalReady(true);
+          return;
+        }
+        const script = document.createElement("script");
+        script.id = scriptId;
+        script.src = `https://www.paypal.com/sdk/js?client-id=${body.clientId}&vault=true&intent=subscription&debug=true`;
+        script.async = true;
+        script.onload = () => {
+          if (isMounted) setPaypalReady(true);
+        };
+        script.onerror = () => {
+          if (isMounted) setPaypalError("Failed to load PayPal checkout.");
+        };
+        document.body.appendChild(script);
+      } catch (error) {
+        if (isMounted) {
+          setPaypalError(error instanceof Error ? error.message : "PayPal init failed.");
+        }
+      }
+    };
+    loadBilling();
+    loadSdk();
 
-  useEffect(() => {
-    const scriptId = "razorpay-checkout";
-    if (document.getElementById(scriptId)) return;
-    const script = document.createElement("script");
-    script.id = scriptId;
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    document.body.appendChild(script);
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const suggestedPlans = useMemo(() => {
@@ -138,25 +201,19 @@ export default function PricingPage() {
     return sorted.slice(start, start + 3);
   }, [consumption]);
 
-  const startCheckout = async (plan: Plan) => {
-    if (plan.code === "free") {
-      setNotice("Free plan is active by default.");
-      return;
-    }
-
-    setNotice(null);
-    setLoadingPlan(plan.code);
-
+  const handleSuccess = (subscriptionId: string) => {
+    setNotice(`Subscription created: ${subscriptionId}`);
+    setSelectedPlan(null);
+  };
+  const handleFallback = async (plan: Plan) => {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) {
         setNotice("Please sign in again to continue.");
-        setLoadingPlan(null);
         return;
       }
-
-      const response = await fetch("/api/billing/razorpay/subscription", {
+      const response = await fetch("/api/billing/paypal/subscription", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -164,52 +221,24 @@ export default function PricingPage() {
         },
         body: JSON.stringify({ planCode: plan.code }),
       });
-
+      const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Failed to create subscription.");
       }
-
-      const body = (await response.json()) as {
-        keyId: string;
-        subscriptionId: string;
-      };
-
-      if (!window.Razorpay) {
-        throw new Error("Razorpay checkout not loaded.");
+      const url = body.approveUrl as string | undefined;
+      setApprovalUrl(url ?? null);
+      if (url) {
+        const popup = window.open(url, "_blank", "noopener,noreferrer");
+        if (popup) {
+          setNotice("Approval opened in a new tab.");
+        } else {
+          setNotice("Popup blocked. Use the approval link below.");
+        }
+      } else {
+        setNotice("Subscription created. Approval required.");
       }
-
-      const razorpay = new window.Razorpay({
-        key: body.keyId,
-        subscription_id: body.subscriptionId,
-        name: "MorphyGen",
-        description: `${plan.name} plan`,
-        prefill: {
-          email: email ?? undefined,
-        },
-        theme: { color: "#ff7a1a" },
-        handler: async (result: {
-          razorpay_subscription_id?: string;
-          razorpay_payment_id?: string;
-          razorpay_signature?: string;
-        }) => {
-          await fetch("/api/billing/razorpay/verify", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(result),
-          });
-          setNotice("Subscription activated. Thank you!");
-        },
-      });
-
-      razorpay.open();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Checkout failed.");
-    } finally {
-      setLoadingPlan(null);
     }
   };
 
@@ -217,6 +246,11 @@ export default function PricingPage() {
     <section className="section">
       <h2>Pricing</h2>
       <p>Choose a plan based on your monthly document volume.</p>
+      {paypalError ? (
+        <div className="card" style={{ marginTop: "16px" }}>
+          <p className="notice">{paypalError}</p>
+        </div>
+      ) : null}
 
       <div className="grid" style={{ marginTop: "24px" }}>
         <div className="card">
@@ -300,13 +334,13 @@ export default function PricingPage() {
                 <button
                   className="button primary"
                   type="button"
-                  disabled={loadingPlan === plan.code}
-                  onClick={() => startCheckout(plan)}
+                  disabled={plan.code === "free" || loadingBilling}
+                  onClick={() => setSelectedPlan(plan)}
                 >
                   {plan.code === "free"
                     ? "Included"
-                    : loadingPlan === plan.code
-                      ? "Starting checkout..."
+                    : isPaidUser
+                      ? "Upgrade"
                       : "Subscribe"}
                 </button>
               </div>
@@ -334,13 +368,13 @@ export default function PricingPage() {
                 <button
                   className="button"
                   type="button"
-                  disabled={loadingPlan === plan.code}
-                  onClick={() => startCheckout(plan)}
+                  disabled={plan.code === "free" || loadingBilling}
+                  onClick={() => setSelectedPlan(plan)}
                 >
                   {plan.code === "free"
                     ? "Included"
-                    : loadingPlan === plan.code
-                      ? "Starting checkout..."
+                    : isPaidUser
+                      ? "Upgrade"
                       : "Subscribe"}
                 </button>
               </div>
@@ -348,6 +382,59 @@ export default function PricingPage() {
           ))}
         </div>
       </div>
+
+      {selectedPlan ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <h3>{selectedPlan.name}</h3>
+                <p className="modal-subtitle">{selectedPlan.price}</p>
+              </div>
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  setSelectedPlan(null);
+                  setApprovalUrl(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            {selectedPlan.code === "free" ? (
+              <p>This plan is included by default.</p>
+            ) : selectedPlan.paypalPlanId && paypalReady ? (
+              <PayPalSubscribeButton
+                planId={selectedPlan.paypalPlanId}
+                onSuccess={handleSuccess}
+                onError={(message) => setNotice(message)}
+              />
+            ) : paypalError ? (
+              <p className="notice">{paypalError}</p>
+            ) : (
+              <div>
+                <p>Direct checkout failed. Use the approval link fallback.</p>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => handleFallback(selectedPlan)}
+                >
+                  Open approval link
+                </button>
+              </div>
+            )}
+            {approvalUrl ? (
+              <div className="modal-approval">
+                <p>Approval required. Use this link if the popup was blocked:</p>
+                <a href={approvalUrl} target="_blank" rel="noreferrer">
+                  {approvalUrl}
+                </a>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

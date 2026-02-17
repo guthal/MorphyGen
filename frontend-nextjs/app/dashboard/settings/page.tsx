@@ -12,6 +12,12 @@ type ProfileRow = {
   billing_email: string | null;
 };
 
+const WEBHOOK_EVENT_TYPES = [
+  "job.started",
+  "job.succeeded",
+  "job.failed",
+];
+
 export default function SettingsPage() {
   const [formState, setFormState] = useState({
     fullName: "Vishveshwara Guthal Gowda",
@@ -27,6 +33,17 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [webhookLoading, setWebhookLoading] = useState(true);
+  const [webhookNotice, setWebhookNotice] = useState<string | null>(null);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookHasSecret, setWebhookHasSecret] = useState(false);
+  const [rotateSecret, setRotateSecret] = useState(false);
+  const [enabledEventTypes, setEnabledEventTypes] = useState<string[]>([
+    "job.succeeded",
+    "job.failed",
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -79,6 +96,60 @@ export default function SettingsPage() {
     };
 
     loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const getAuthHeaders = async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return null;
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadWebhookConfig = async () => {
+      setWebhookError(null);
+      const headers = await getAuthHeaders();
+      if (!headers) {
+        if (isMounted) {
+          setWebhookError("No active session found.");
+          setWebhookLoading(false);
+        }
+        return;
+      }
+
+      const response = await fetch("/api/webhooks", { headers });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        if (isMounted) {
+          setWebhookError(body.error || "Failed to load webhooks.");
+          setWebhookLoading(false);
+        }
+        return;
+      }
+
+      const body = (await response.json()) as {
+        webhookUrl: string | null;
+        enabledEventTypes: string[];
+        hasWebhookSecret: boolean;
+      };
+
+      if (isMounted) {
+        setWebhookUrl(body.webhookUrl ?? "");
+        setEnabledEventTypes(body.enabledEventTypes ?? []);
+        setWebhookHasSecret(Boolean(body.hasWebhookSecret));
+        setWebhookLoading(false);
+      }
+    };
+
+    loadWebhookConfig();
 
     return () => {
       isMounted = false;
@@ -190,6 +261,89 @@ export default function SettingsPage() {
     }
     await supabase.auth.signOut();
     window.location.href = "/";
+  };
+
+  const toggleEventType = (value: string) => {
+    setEnabledEventTypes((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const handleWebhookSave = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setWebhookError(null);
+    setWebhookNotice(null);
+
+    const headers = await getAuthHeaders();
+    if (!headers) {
+      setWebhookError("No active session found.");
+      return;
+    }
+
+    const payload: {
+      webhookUrl: string | null;
+      enabledEventTypes: string[];
+      webhookSecret?: string | null;
+    } = {
+      webhookUrl: webhookUrl.trim() || null,
+      enabledEventTypes,
+    };
+
+    if (rotateSecret) {
+      payload.webhookSecret = webhookSecret.trim() || null;
+    }
+
+    const response = await fetch("/api/webhooks", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setWebhookError(body.error || "Failed to update webhooks.");
+      return;
+    }
+
+    const body = (await response.json()) as {
+      hasWebhookSecret: boolean;
+      webhookUrl: string | null;
+      enabledEventTypes: string[];
+    };
+
+    setWebhookUrl(body.webhookUrl ?? "");
+    setEnabledEventTypes(body.enabledEventTypes ?? []);
+    setWebhookHasSecret(Boolean(body.hasWebhookSecret));
+    setWebhookSecret("");
+    setRotateSecret(false);
+    setWebhookNotice("Webhook settings updated.");
+  };
+
+  const handleWebhookTest = async () => {
+    setWebhookError(null);
+    setWebhookNotice(null);
+
+    const headers = await getAuthHeaders();
+    if (!headers) {
+      setWebhookError("No active session found.");
+      return;
+    }
+
+    const response = await fetch("/api/webhooks/test", {
+      method: "POST",
+      headers,
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setWebhookError(body.error || "Webhook test failed.");
+      return;
+    }
+
+    setWebhookNotice("Webhook test succeeded.");
   };
 
   if (loading) {
@@ -327,6 +481,85 @@ export default function SettingsPage() {
               Update password
             </button>
           </div>
+        </form>
+
+        <form className="settings-card" onSubmit={handleWebhookSave}>
+          <h3>Webhooks</h3>
+          <p>Send events to your endpoint when jobs complete or fail.</p>
+          {webhookLoading ? (
+            <p>Loading webhook settings...</p>
+          ) : (
+            <>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label htmlFor="webhookUrl">Webhook URL (HTTPS)</label>
+                  <input
+                    id="webhookUrl"
+                    type="url"
+                    placeholder="https://example.com/webhook"
+                    value={webhookUrl}
+                    onChange={(event) => setWebhookUrl(event.target.value)}
+                  />
+                </div>
+                <div className="settings-field">
+                  <label>Event types</label>
+                  <div className="settings-checkbox-row">
+                    {WEBHOOK_EVENT_TYPES.map((eventType) => (
+                      <label key={eventType} className="settings-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={enabledEventTypes.includes(eventType)}
+                          onChange={() => toggleEventType(eventType)}
+                        />
+                        <span>{eventType}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="settings-field">
+                  <label>Webhook secret</label>
+                  <div className="settings-checkbox-row">
+                    <label className="settings-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={rotateSecret}
+                        onChange={(event) => setRotateSecret(event.target.checked)}
+                      />
+                      <span>{webhookHasSecret ? "Rotate secret" : "Set secret"}</span>
+                    </label>
+                  </div>
+                  {rotateSecret ? (
+                    <input
+                      type="text"
+                      placeholder="whsec_..."
+                      value={webhookSecret}
+                      onChange={(event) => setWebhookSecret(event.target.value)}
+                    />
+                  ) : (
+                    <p className="field-hint">
+                      {webhookHasSecret
+                        ? "A secret is already set."
+                        : "No secret set yet."}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {webhookNotice ? <p className="notice">{webhookNotice}</p> : null}
+              {webhookError ? <p className="notice">{webhookError}</p> : null}
+              <div className="settings-actions">
+                <button className="button primary" type="submit">
+                  Save webhook settings
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={handleWebhookTest}
+                >
+                  Send test webhook
+                </button>
+              </div>
+            </>
+          )}
         </form>
 
         <div className="settings-card danger-card">

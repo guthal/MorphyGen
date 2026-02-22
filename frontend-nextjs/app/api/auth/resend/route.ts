@@ -17,10 +17,16 @@ const requireEnv = (value: string, name: string) => {
 const isValidEmail = (value: string) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
+type ResendPayload = {
+  email?: string;
+  password?: string;
+  mode?: "signup" | "magiclink";
+};
+
 export const POST = async (req: NextRequest) => {
-  let payload: { email?: string } = {};
+  let payload: ResendPayload = {};
   try {
-    payload = (await req.json()) as { email?: string };
+    payload = (await req.json()) as ResendPayload;
   } catch {
     payload = {};
   }
@@ -30,13 +36,33 @@ export const POST = async (req: NextRequest) => {
     return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
   }
 
-  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-    type: "signup",
-    email,
-    options: {
-      redirectTo: `${siteUrl}/auth-callback`,
-    },
-  });
+  const mode = payload.mode ?? "signup";
+  const password = payload.password?.trim() ?? "";
+  if (mode === "signup" && !password) {
+    return NextResponse.json(
+      { error: "Password is required to resend a signup verification link." },
+      { status: 400 }
+    );
+  }
+
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink(
+    mode === "signup"
+      ? {
+          type: "signup",
+          email,
+          password,
+          options: {
+            redirectTo: `${siteUrl}/auth-callback`,
+          },
+        }
+      : {
+          type: "magiclink",
+          email,
+          options: {
+            redirectTo: `${siteUrl}/auth-callback`,
+          },
+        }
+  );
 
   if (error || !data?.properties?.action_link) {
     return NextResponse.json(

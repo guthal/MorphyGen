@@ -4,9 +4,11 @@ import { useState } from "react";
 
 export default function VerifyEmailPage() {
   const [email, setEmail] = useState("");
+  const [mode, setMode] = useState<"signup" | "magiclink">("signup");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [password, setPassword] = useState("");
 
   const handleResend = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -18,7 +20,7 @@ export default function VerifyEmailPage() {
       const response = await fetch("/api/auth/resend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, mode, password }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -51,6 +53,29 @@ export default function VerifyEmailPage() {
             onChange={(event) => setEmail(event.target.value)}
             required
           />
+          <label htmlFor="mode">Link type</label>
+          <select
+            id="mode"
+            value={mode}
+            onChange={(event) =>
+              setMode(event.target.value as "signup" | "magiclink")
+            }
+          >
+            <option value="signup">Signup verification link</option>
+            <option value="magiclink">Magic link (passwordless)</option>
+          </select>
+          {mode === "signup" ? (
+            <>
+              <label htmlFor="password">Password (required for signup link)</label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </>
+          ) : null}
           {notice ? <p className="notice">{notice}</p> : null}
           {error ? <p className="notice">{error}</p> : null}
           <button className="button primary" type="submit" disabled={sending}>

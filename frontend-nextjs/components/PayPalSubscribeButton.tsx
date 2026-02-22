@@ -56,9 +56,39 @@ export default function PayPalSubscribeButton({
         return body.id as string;
       },
       onApprove: (data: { subscriptionID?: string }) => {
-        if (data?.subscriptionID && onSuccess) {
-          onSuccess(data.subscriptionID);
-        }
+        const run = async () => {
+          if (!data?.subscriptionID) return;
+
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData.session?.access_token;
+          if (!token) {
+            throw new Error("Please sign in again to continue.");
+          }
+
+          const reconcileResponse = await fetch("/api/billing/paypal/reconcile", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ subscriptionId: data.subscriptionID }),
+          });
+
+          const reconcileBody = await reconcileResponse.json().catch(() => ({}));
+          if (!reconcileResponse.ok) {
+            throw new Error(reconcileBody.error || "Failed to reconcile PayPal subscription.");
+          }
+
+          if (onSuccess) {
+            onSuccess(data.subscriptionID);
+          }
+        };
+
+        run().catch((err: unknown) => {
+          if (onError) {
+            onError(err instanceof Error ? err.message : "PayPal reconciliation failed.");
+          }
+        });
       },
       onError: (err: Error) => {
         if (onError) {

@@ -14,6 +14,12 @@ const requireEnv = (value: string | undefined, name: string) => {
 };
 
 const getHeader = (req: NextRequest, name: string) => req.headers.get(name) || "";
+const normalizeStatus = (value: string | undefined) => {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "ACTIVE";
+  if (raw === "COMPLETED") return "ACTIVE";
+  return raw;
+};
 
 export const POST = async (req: NextRequest) => {
   const rawBody = await req.text();
@@ -56,7 +62,7 @@ export const POST = async (req: NextRequest) => {
   const resource = (event.resource || {}) as Record<string, any>;
   let userId = resource.custom_id as string | undefined;
   let planId = resource.plan_id as string | undefined;
-  let status = resource.status as string | undefined;
+  let status = (resource.status as string | undefined) ?? (resource.state as string | undefined);
   let subscriptionId = resource.id as string | undefined;
   let startTime = resource.start_time as string | undefined;
   let nextBilling = resource.billing_info?.next_billing_time as string | undefined;
@@ -69,7 +75,20 @@ export const POST = async (req: NextRequest) => {
       (resource.billing_agreement_id as string | undefined);
   }
 
-  if (subscriptionId && !userId) {
+  let existingByProviderId: { id: string; user_id: string } | null = null;
+  if (subscriptionId) {
+    const { data } = await supabaseAdmin
+      .from("subscriptions")
+      .select("id,user_id")
+      .eq("paypal_subscription_id", subscriptionId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    existingByProviderId = data;
+    userId = userId ?? data?.user_id;
+  }
+
+  if (subscriptionId && (!userId || !planId || !status || !startTime || !nextBilling)) {
     try {
       const subscription = await paypalGet<Record<string, any>>(
         `/v1/billing/subscriptions/${subscriptionId}`
@@ -92,36 +111,45 @@ export const POST = async (req: NextRequest) => {
 
   if (
     userId &&
-    (eventType.startsWith("BILLING.SUBSCRIPTION.") || eventType === "PAYMENT.SALE.COMPLETED")
+    subscriptionId &&
+    (eventType.startsWith("BILLING.SUBSCRIPTION.") || eventType.startsWith("PAYMENT.SALE."))
   ) {
     const now = new Date().toISOString();
     const updatePayload = {
       plan_code: planId ?? "free",
-      status: status ?? "ACTIVE",
+      status: normalizeStatus(status),
+      paypal_subscription_id: subscriptionId,
       current_period_start: startTime ?? null,
       current_period_end: nextBilling ?? null,
       updated_at: now,
     };
 
-    const { data: existing } = await supabaseAdmin
-      .from("subscriptions")
-      .select("id")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (existing?.id) {
-      await supabaseAdmin.from("subscriptions").update(updatePayload).eq("id", existing.id);
+    if (existingByProviderId?.id) {
+      await supabaseAdmin
+        .from("subscriptions")
+        .update(updatePayload)
+        .eq("id", existingByProviderId.id);
     } else {
-      await supabaseAdmin.from("subscriptions").insert({
-        user_id: userId,
-        ...updatePayload,
-        created_at: now,
-      });
+      const { data: existingByUser } = await supabaseAdmin
+        .from("subscriptions")
+        .select("id")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingByUser?.id) {
+        await supabaseAdmin.from("subscriptions").update(updatePayload).eq("id", existingByUser.id);
+      } else {
+        await supabaseAdmin.from("subscriptions").insert({
+          user_id: userId,
+          ...updatePayload,
+          created_at: now,
+        });
+      }
     }
 
-    if (startTime && nextBilling && subscriptionId) {
+    if (startTime && nextBilling) {
       await supabaseAdmin.from("credit_usage_cycles").upsert({
         user_id: userId,
         subscription_id: subscriptionId,
@@ -133,9 +161,17 @@ export const POST = async (req: NextRequest) => {
 
     await supabaseAdmin.from("payment_events").insert({
       user_id: userId,
+      provider: "paypal",
       event_type: eventType,
       event_id: eventId,
       payload: event,
+    });
+  } else {
+    console.warn("PayPal webhook skipped DB sync", {
+      eventType,
+      eventId,
+      hasUserId: Boolean(userId),
+      hasSubscriptionId: Boolean(subscriptionId),
     });
   }
 

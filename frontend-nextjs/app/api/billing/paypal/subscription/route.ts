@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUserFromRequest } from "@/lib/supabaseAuth";
 import { paypalRequest } from "@/lib/paypalAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,16 @@ export const POST = async (req: NextRequest) => {
   });
 
   const approveUrl = data.links?.find((link) => link.rel === "approve")?.href ?? null;
+  const now = new Date().toISOString();
+
+  await supabaseAdmin.from("subscriptions").insert({
+    user_id: user.id,
+    plan_code: planCode,
+    status: data.status ?? "APPROVAL_PENDING",
+    paypal_subscription_id: data.id,
+    created_at: now,
+    updated_at: now,
+  });
 
   return NextResponse.json(
     {

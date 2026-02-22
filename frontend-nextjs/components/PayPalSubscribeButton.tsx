@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 declare global {
   interface Window {
@@ -9,14 +10,14 @@ declare global {
 }
 
 type PayPalButtonProps = {
-  planId: string;
+  planCode: string;
   disabled?: boolean;
   onSuccess?: (subscriptionId: string) => void;
   onError?: (message: string) => void;
 };
 
 export default function PayPalSubscribeButton({
-  planId,
+  planCode,
   disabled,
   onSuccess,
   onError,
@@ -24,15 +25,36 @@ export default function PayPalSubscribeButton({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!planId || disabled) return;
+    if (!planCode || disabled) return;
     if (!containerRef.current) return;
     if (!window.paypal) return;
 
     containerRef.current.innerHTML = "";
 
     const button = window.paypal.Buttons({
-      createSubscription: (_data: unknown, actions: { subscription: { create: (input: { plan_id: string }) => Promise<string> } }) =>
-        actions.subscription.create({ plan_id: planId }),
+      createSubscription: async () => {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) {
+          throw new Error("Please sign in again to continue.");
+        }
+
+        const response = await fetch("/api/billing/paypal/subscription", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ planCode }),
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body?.id) {
+          throw new Error(body.error || "Failed to create PayPal subscription.");
+        }
+
+        return body.id as string;
+      },
       onApprove: (data: { subscriptionID?: string }) => {
         if (data?.subscriptionID && onSuccess) {
           onSuccess(data.subscriptionID);
@@ -57,7 +79,7 @@ export default function PayPalSubscribeButton({
         containerRef.current.innerHTML = "";
       }
     };
-  }, [planId, disabled, onSuccess, onError]);
+  }, [planCode, disabled, onSuccess, onError]);
 
   return <div ref={containerRef} />;
 }

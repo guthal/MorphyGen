@@ -25,13 +25,17 @@ export const GET = async (req: NextRequest) => {
 
   const { data: sub } = await supabaseAdmin
     .from("subscriptions")
-    .select("plan_code,status,razorpay_subscription_id,current_period_start,current_period_end")
+    .select(
+      "plan_code,status,razorpay_subscription_id,paypal_subscription_id,current_period_start,current_period_end"
+    )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!sub?.razorpay_subscription_id || !sub.current_period_start || !sub.current_period_end) {
+  const providerSubscriptionId = sub?.razorpay_subscription_id ?? sub?.paypal_subscription_id;
+
+  if (!providerSubscriptionId || !sub.current_period_start || !sub.current_period_end) {
     const now = new Date();
     const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
     const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
@@ -67,7 +71,7 @@ export const GET = async (req: NextRequest) => {
     .from("credit_usage_cycles")
     .select("credits_used,period_start,period_end")
     .eq("user_id", user.id)
-    .eq("subscription_id", sub.razorpay_subscription_id)
+    .eq("subscription_id", providerSubscriptionId)
     .eq("period_start", sub.current_period_start)
     .eq("period_end", sub.current_period_end)
     .maybeSingle();

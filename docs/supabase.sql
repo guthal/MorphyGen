@@ -96,7 +96,7 @@ on api_request_logs
 for select
 using (auth.uid() = user_id);
 
--- Billing subscriptions (Razorpay)
+-- Billing subscriptions (provider-specific ids)
 create table if not exists subscriptions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -104,14 +104,26 @@ create table if not exists subscriptions (
   status text not null default 'PENDING',
   razorpay_subscription_id text,
   razorpay_customer_id text,
+  paypal_subscription_id text,
+  paypal_customer_id text,
   current_period_start timestamptz,
   current_period_end timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+alter table subscriptions
+  add column if not exists paypal_subscription_id text,
+  add column if not exists paypal_customer_id text;
+
 create index if not exists subscriptions_user_idx
 on subscriptions (user_id);
+
+create index if not exists subscriptions_razorpay_subscription_idx
+on subscriptions (razorpay_subscription_id);
+
+create index if not exists subscriptions_paypal_subscription_idx
+on subscriptions (paypal_subscription_id);
 
 alter table subscriptions enable row level security;
 
@@ -188,21 +200,25 @@ declare
   cycle_end timestamptz;
   sub_id text;
 begin
-  select razorpay_subscription_id, current_period_start, current_period_end
+  select
+    razorpay_subscription_id,
+    paypal_subscription_id,
+    current_period_start,
+    current_period_end
     into sub_record
   from subscriptions
   where user_id = p_user_id and status = 'ACTIVE'
   order by created_at desc
   limit 1;
 
-  if sub_record.razorpay_subscription_id is null then
+  if coalesce(sub_record.razorpay_subscription_id, sub_record.paypal_subscription_id) is null then
     cycle_start := date_trunc('month', now());
     cycle_end := (date_trunc('month', now()) + interval '1 month');
     sub_id := 'free';
   else
     cycle_start := sub_record.current_period_start;
     cycle_end := sub_record.current_period_end;
-    sub_id := sub_record.razorpay_subscription_id;
+    sub_id := coalesce(sub_record.razorpay_subscription_id, sub_record.paypal_subscription_id);
   end if;
 
   insert into credit_usage_cycles (

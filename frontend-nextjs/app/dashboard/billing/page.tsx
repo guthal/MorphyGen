@@ -157,8 +157,11 @@ export default function BillingPage() {
     document.body.appendChild(script);
   }, []);
 
-  const currentPlan = PLANS[0];
+  const currentPlan =
+    PLANS.find((plan) => plan.code === (usage?.planCode ?? "free")) ?? PLANS[0];
   const featuredPlan = PLANS.find((plan) => plan.code === "boost") ?? PLANS[1];
+  const formatDateUtc = (value: string) =>
+    new Date(value).toLocaleDateString(undefined, { timeZone: "UTC" });
 
   const startCheckout = async (plan: Plan) => {
     if (plan.code === "free") {
@@ -242,10 +245,7 @@ export default function BillingPage() {
       <div className="card" style={{ marginTop: "24px" }}>
         <span className="badge">Current plan</span>
         <h3>{currentPlan.name}</h3>
-        <p>
-          Every account starts on the Free plan. Perfect for testing and
-          prototyping.
-        </p>
+        <p>{currentPlan.bestFor}</p>
         {notice ? <p className="notice">{notice}</p> : null}
         {usage ? (
           <div style={{ marginTop: "16px", display: "grid", gap: "8px" }}>
@@ -260,8 +260,8 @@ export default function BillingPage() {
             {usage.periodStart && usage.periodEnd ? (
               <div>
                 <strong>Cycle:</strong>{" "}
-                {new Date(usage.periodStart).toLocaleDateString()} –{" "}
-                {new Date(usage.periodEnd).toLocaleDateString()}
+                {formatDateUtc(usage.periodStart)} –{" "}
+                {formatDateUtc(usage.periodEnd)}
               </div>
             ) : null}
           </div>

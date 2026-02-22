@@ -73,6 +73,7 @@ export const POST = async (req: NextRequest) => {
     if (sub?.user_id) {
       await supabaseAdmin.from("payment_events").insert({
         user_id: sub.user_id,
+        provider: "razorpay",
         event_type: eventType,
         event_id: event.entity?.id ?? null,
         payload: event,

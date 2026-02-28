@@ -19,6 +19,14 @@ type Plan = {
   highlight?: boolean;
 };
 
+type Receipt = {
+  id: string;
+  status: string;
+  time: string;
+  amount: string;
+  currency: string;
+};
+
 const PLANS: Plan[] = [
   {
     name: "Free",
@@ -105,6 +113,7 @@ const PLANS: Plan[] = [
 
 export default function BillingPage() {
   const [notice, setNotice] = useState<string | null>(null);
+  const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<{
     planCode: string;
     planCredits: number;
@@ -115,10 +124,20 @@ export default function BillingPage() {
     status: string;
   } | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+  const [receiptsError, setReceiptsError] = useState<string | null>(null);
+  const [downloadingReceiptId, setDownloadingReceiptId] = useState<string | null>(null);
+  const [emailingReceiptId, setEmailingReceiptId] = useState<string | null>(null);
   const [loadingPlan, setLoadingPlan] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
   const isAdminMode = Boolean(adminEmail) && email === adminEmail;
+
+  const getAuthToken = async () => {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  };
 
   useEffect(() => {
     const loadUser = async () => {
@@ -130,8 +149,7 @@ export default function BillingPage() {
 
   useEffect(() => {
     const loadUsage = async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
+      const token = await getAuthToken();
       if (!token) return;
 
       const response = await fetch("/api/billing/usage", {
@@ -145,6 +163,36 @@ export default function BillingPage() {
       setUsage(body);
     };
     loadUsage();
+  }, []);
+
+  useEffect(() => {
+    const loadReceipts = async () => {
+      setReceiptsError(null);
+      setReceiptsLoading(true);
+      const token = await getAuthToken();
+      if (!token) {
+        setReceiptsLoading(false);
+        return;
+      }
+
+      const response = await fetch("/api/billing/paypal/receipts", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setReceiptsError(body.error || "Failed to load receipts.");
+        setReceiptsLoading(false);
+        return;
+      }
+
+      const body = (await response.json()) as { receipts?: Receipt[] };
+      setReceipts(body.receipts ?? []);
+      setReceiptsLoading(false);
+    };
+    loadReceipts();
   }, []);
 
   useEffect(() => {
@@ -162,6 +210,79 @@ export default function BillingPage() {
   const featuredPlan = PLANS.find((plan) => plan.code === "boost") ?? PLANS[1];
   const formatDateUtc = (value: string) =>
     new Date(value).toLocaleDateString(undefined, { timeZone: "UTC" });
+
+  const downloadReceipt = async (receiptId: string) => {
+    setReceiptNotice(null);
+    setDownloadingReceiptId(receiptId);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setReceiptNotice("Please sign in again to download receipts.");
+        return;
+      }
+
+      const response = await fetch(
+        `/api/billing/paypal/receipts/${encodeURIComponent(receiptId)}/pdf`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to download receipt.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `receipt-${receiptId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setReceiptNotice(error instanceof Error ? error.message : "Failed to download receipt.");
+    } finally {
+      setDownloadingReceiptId(null);
+    }
+  };
+
+  const emailReceipt = async (receiptId: string) => {
+    setReceiptNotice(null);
+    setEmailingReceiptId(receiptId);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setReceiptNotice("Please sign in again to email receipts.");
+        return;
+      }
+
+      const response = await fetch(
+        `/api/billing/paypal/receipts/${encodeURIComponent(receiptId)}/email`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to email receipt.");
+      }
+
+      setReceiptNotice("Receipt emailed successfully.");
+    } catch (error) {
+      setReceiptNotice(error instanceof Error ? error.message : "Failed to email receipt.");
+    } finally {
+      setEmailingReceiptId(null);
+    }
+  };
 
   const startCheckout = async (plan: Plan) => {
     if (plan.code === "free") {
@@ -313,6 +434,56 @@ export default function BillingPage() {
             ))}
           </div>
         ) : null}
+      </div>
+
+      <div className="card" style={{ marginTop: "24px" }}>
+        <h3>Receipts</h3>
+        <p>Download or email receipts for your PayPal subscription payments.</p>
+        {receiptNotice ? <p className="notice">{receiptNotice}</p> : null}
+        {receiptsError ? <p className="notice">{receiptsError}</p> : null}
+        {receiptsLoading ? (
+          <p>Loading receipts...</p>
+        ) : receipts.length === 0 ? (
+          <p>No PayPal receipts found yet.</p>
+        ) : (
+          <div style={{ display: "grid", gap: "12px", marginTop: "16px" }}>
+            {receipts.map((receipt) => (
+              <div
+                key={receipt.id}
+                className="card"
+                style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}
+              >
+                <div>
+                  <div>
+                    <strong>{receipt.currency} {receipt.amount}</strong>
+                  </div>
+                  <div style={{ color: "#6d6d6d" }}>
+                    {receipt.time ? formatDateUtc(receipt.time) : "Unknown date"} ·{" "}
+                    {receipt.status}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={downloadingReceiptId === receipt.id}
+                    onClick={() => downloadReceipt(receipt.id)}
+                  >
+                    {downloadingReceiptId === receipt.id ? "Downloading..." : "Download PDF"}
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={emailingReceiptId === receipt.id}
+                    onClick={() => emailReceipt(receipt.id)}
+                  >
+                    {emailingReceiptId === receipt.id ? "Sending..." : "Email receipt"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ marginTop: "24px" }}>

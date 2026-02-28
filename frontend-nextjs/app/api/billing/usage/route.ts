@@ -33,7 +33,39 @@ export const GET = async (req: NextRequest) => {
     .limit(1)
     .maybeSingle();
 
-  const providerSubscriptionId = sub?.razorpay_subscription_id ?? sub?.paypal_subscription_id;
+  if (!sub) {
+    const now = new Date();
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+
+    const { data: cycle } = await supabaseAdmin
+      .from("credit_usage_cycles")
+      .select("credits_used")
+      .eq("user_id", user.id)
+      .eq("subscription_id", "free")
+      .eq("period_start", periodStart)
+      .eq("period_end", periodEnd)
+      .maybeSingle();
+
+    const planCredits = PLAN_CREDITS.free ?? 50;
+    const creditsUsed = cycle?.credits_used ?? 0;
+    const creditsRemaining = Math.max(planCredits - creditsUsed, 0);
+
+    return NextResponse.json(
+      {
+        planCode: "free",
+        planCredits,
+        creditsUsed,
+        creditsRemaining,
+        periodStart,
+        periodEnd,
+        status: "FREE",
+      },
+      { status: 200 }
+    );
+  }
+
+  const providerSubscriptionId = sub.razorpay_subscription_id ?? sub.paypal_subscription_id;
 
   if (!providerSubscriptionId || !sub.current_period_start || !sub.current_period_end) {
     const now = new Date();

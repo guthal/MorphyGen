@@ -4,12 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import PayPalSubscribeButton from "@/components/PayPalSubscribeButton";
 import { supabase } from "../../lib/supabaseClient";
 
-declare global {
-  interface Window {
-    Razorpay?: any;
-  }
-}
-
 type Plan = {
   name: string;
   price: string;
@@ -121,7 +115,6 @@ export default function PricingPage() {
   const [loadingBilling, setLoadingBilling] = useState(true);
   const [approvalUrl, setApprovalUrl] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
-  const [razorpayReady, setRazorpayReady] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -199,24 +192,9 @@ export default function PricingPage() {
         }
       }
     };
-    const loadRazorpay = () => {
-      const scriptId = "razorpay-checkout";
-      if (document.getElementById(scriptId)) {
-        setRazorpayReady(true);
-        return;
-      }
-      const script = document.createElement("script");
-      script.id = scriptId;
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.async = true;
-      script.onload = () => setRazorpayReady(true);
-      script.onerror = () => setNotice("Failed to load Razorpay checkout.");
-      document.body.appendChild(script);
-    };
     loadBilling();
     loadSession();
     loadSdk();
-    loadRazorpay();
 
     return () => {
       isMounted = false;
@@ -280,57 +258,6 @@ export default function PricingPage() {
       setNotice(error instanceof Error ? error.message : "Checkout failed.");
     }
   };
-  const handleRazorpay = async (plan: Plan) => {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) {
-        setNotice("Please sign in again to continue.");
-        return;
-      }
-      const response = await fetch("/api/billing/razorpay/subscription", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ planCode: plan.code }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(body.error || "Failed to create subscription.");
-      }
-      if (!window.Razorpay) {
-        throw new Error("Razorpay checkout not loaded.");
-      }
-      const razorpay = new window.Razorpay({
-        key: body.keyId,
-        subscription_id: body.subscriptionId,
-        name: "MorphyGen",
-        description: `${plan.name} plan`,
-        handler: async (result: {
-          razorpay_subscription_id?: string;
-          razorpay_payment_id?: string;
-          razorpay_signature?: string;
-        }) => {
-          await fetch("/api/billing/razorpay/verify", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(result),
-          });
-          setNotice("Subscription activated. Thank you!");
-          setSelectedPlan(null);
-        },
-      });
-      razorpay.open();
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Checkout failed.");
-    }
-  };
-
   return (
     <section className="section">
       <h2>Pricing</h2>
@@ -502,18 +429,6 @@ export default function PricingPage() {
                     onSuccess={handleSuccess}
                     onError={(message) => setNotice(message)}
                   />
-                </div>
-                <div className="modal-divider">or</div>
-                <div>
-                  <h4>Razorpay</h4>
-                  <button
-                    className="button primary"
-                    type="button"
-                    disabled={!razorpayReady}
-                    onClick={() => handleRazorpay(selectedPlan)}
-                  >
-                    {razorpayReady ? "Pay with Razorpay" : "Loading Razorpay..."}
-                  </button>
                 </div>
               </div>
             ) : paypalError ? (

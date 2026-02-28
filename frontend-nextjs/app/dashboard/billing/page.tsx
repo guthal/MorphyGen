@@ -493,7 +493,7 @@ export default function BillingPage() {
           SLAs.
         </p>
         <div style={{ marginTop: "16px" }}>
-          <a className="button primary" href="mailto:masuvi1970@gmail.com">
+          <a className="button primary" href="mailto:admin@contact.morphygen.com">
             Contact sales
           </a>
         </div>

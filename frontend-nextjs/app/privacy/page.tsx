@@ -54,7 +54,7 @@ export default function PrivacyPage() {
           MorphyGen is the data controller for personal data processed through
           our website, dashboard, and APIs.
         </p>
-        <p>Contact: masuvi1970@gmail.com</p>
+        <p>Contact: admin@contact.morphygen.com</p>
       </div>
 
       <div className="card" style={{ marginTop: "16px" }}>
@@ -120,7 +120,7 @@ export default function PrivacyPage() {
         <p>
           You may access, correct, delete, restrict, or object to processing, and
           request portability. To exercise these rights, contact us at
-          masuvi1970@gmail.com.
+          admin@contact.morphygen.com.
         </p>
       </div>
 

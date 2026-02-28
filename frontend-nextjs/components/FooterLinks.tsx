@@ -31,7 +31,7 @@ export default function FooterLinks() {
 
   return (
     <>
-      <a href="mailto:masuvi1970@gmail.com">Support</a>
+      <a href="mailto:admin@contact.morphygen.com">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
       {hasSession ? null : <a href="/signup">Start Free</a>}

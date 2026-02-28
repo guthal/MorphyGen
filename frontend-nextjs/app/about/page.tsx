@@ -85,7 +85,7 @@ export default function AboutPage() {
           throughput needs or custom plans.
         </p>
         <div style={{ marginTop: "16px" }}>
-          <a className="button primary" href="mailto:masuvi1970@gmail.com">
+          <a className="button primary" href="mailto:admin@contact.morphygen.com">
             Contact us
           </a>
         </div>

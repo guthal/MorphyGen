@@ -183,7 +183,7 @@ export default function TermsPage() {
 
       <div className="card" style={{ marginTop: "16px" }}>
         <h3>17) Contact</h3>
-        <p>For questions, contact: masuvi1970@gmail.com</p>
+        <p>For questions, contact: admin@contact.morphygen.com</p>
       </div>
     </section>
   );

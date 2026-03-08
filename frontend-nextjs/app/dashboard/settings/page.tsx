@@ -20,8 +20,7 @@ const WEBHOOK_EVENT_TYPES = [
 
 export default function SettingsPage() {
   const [formState, setFormState] = useState({
-    fullName: "Vishveshwara Guthal Gowda",
-    email: "vishveshwaraguthal@gmail.com",
+    fullName: "",
     companyName: "",
     vatNumber: "",
     companyAddress: "",
@@ -30,6 +29,12 @@ export default function SettingsPage() {
     newPassword: "",
     confirmPassword: "",
   });
+  const [currentEmail, setCurrentEmail] = useState("");
+  const [emailForm, setEmailForm] = useState({ nextEmail: "" });
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
+  const [showEmailHelpModal, setShowEmailHelpModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +49,13 @@ export default function SettingsPage() {
     "job.succeeded",
     "job.failed",
   ]);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingPlanCode, setBillingPlanCode] = useState<string>("free");
+  const [billingStatus, setBillingStatus] = useState<string>("FREE");
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -81,16 +93,18 @@ export default function SettingsPage() {
       }
 
       if (isMounted) {
+        const nextEmail = ((user as unknown as { new_email?: string }).new_email ?? null) || null;
         setFormState((prev) => ({
           ...prev,
           fullName: profile?.full_name ?? prev.fullName ?? "",
-          email: user.email ?? prev.email ?? "",
           companyName: profile?.company_name ?? "",
           vatNumber: profile?.vat_number ?? "",
           companyAddress: profile?.company_address ?? "",
           country: profile?.country ?? "",
           billingEmail: profile?.billing_email ?? "",
         }));
+        setCurrentEmail(user.email ?? "");
+        setPendingEmail(nextEmail);
         setLoading(false);
       }
     };
@@ -102,6 +116,23 @@ export default function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+      if (!user) return;
+      const nextEmail = ((user as unknown as { new_email?: string }).new_email ?? null) || null;
+      setCurrentEmail(user.email ?? "");
+      setPendingEmail(nextEmail);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
   const getAuthHeaders = async () => {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -110,6 +141,46 @@ export default function SettingsPage() {
       Authorization: `Bearer ${token}`,
     };
   };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadBilling = async () => {
+      setCancelError(null);
+      const headers = await getAuthHeaders();
+      if (!headers) {
+        if (isMounted) {
+          setBillingPlanCode("free");
+          setBillingStatus("FREE");
+          setBillingLoading(false);
+        }
+        return;
+      }
+
+      const response = await fetch("/api/billing/usage", { headers });
+      if (!response.ok) {
+        if (isMounted) {
+          setBillingPlanCode("free");
+          setBillingStatus("FREE");
+          setBillingLoading(false);
+        }
+        return;
+      }
+
+      const body = (await response.json()) as { planCode?: string; status?: string };
+      if (isMounted) {
+        setBillingPlanCode(body.planCode || "free");
+        setBillingStatus(String(body.status || "FREE").toUpperCase());
+        setBillingLoading(false);
+      }
+    };
+
+    loadBilling();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -194,20 +265,49 @@ export default function SettingsPage() {
       return;
     }
 
-    if (formState.email && formState.email !== user.email) {
-      const { error: emailError } = await supabase.auth.updateUser({
-        email: formState.email,
-      });
-      if (emailError) {
-        setError(emailError.message);
-        return;
-      }
-      setNotice(
-        "Profile updated. Please confirm your new email to finish the change."
-      );
-    } else {
-      setNotice("Profile updated.");
+    setNotice("Profile updated.");
+  };
+
+  const handleEmailSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setEmailError(null);
+    setEmailNotice(null);
+
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData.user;
+    if (!user) {
+      setEmailError("No active session found.");
+      return;
     }
+
+    const nextEmail = emailForm.nextEmail.trim().toLowerCase();
+    if (!nextEmail) {
+      setEmailError("Enter a new email address.");
+      return;
+    }
+
+    if (nextEmail === (user.email ?? "").toLowerCase()) {
+      setEmailError("New email must be different from your current email.");
+      return;
+    }
+
+    setEmailSubmitting(true);
+    const { error: updateError } = await supabase.auth.updateUser({
+      email: nextEmail,
+    });
+
+    if (updateError) {
+      setEmailError(updateError.message);
+      setEmailSubmitting(false);
+      return;
+    }
+
+    setPendingEmail(nextEmail);
+    setEmailForm({ nextEmail: "" });
+    setEmailNotice(
+      "Verification link sent to your new email address. Your account email updates after verification."
+    );
+    setEmailSubmitting(false);
   };
 
   const handlePasswordSubmit = async (
@@ -346,6 +446,43 @@ export default function SettingsPage() {
     setWebhookNotice("Webhook test succeeded.");
   };
 
+  const handleCancelSubscription = async () => {
+    setCancelError(null);
+    setCancelNotice(null);
+
+    const confirmed = window.confirm(
+      "Cancel your PayPal subscription now? Access remains until the current billing period ends if PayPal applies period-end cancellation."
+    );
+    if (!confirmed) return;
+
+    const headers = await getAuthHeaders();
+    if (!headers) {
+      setCancelError("No active session found.");
+      return;
+    }
+
+    setCancelLoading(true);
+    const response = await fetch("/api/billing/paypal/cancel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify({ reason: "Cancelled by customer from settings" }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setCancelError(body.error || "Failed to cancel subscription.");
+      setCancelLoading(false);
+      return;
+    }
+
+    setBillingStatus("CANCELLED");
+    setCancelNotice("Subscription cancellation requested successfully.");
+    setCancelLoading(false);
+  };
+
   if (loading) {
     return (
       <section className="section">
@@ -369,15 +506,6 @@ export default function SettingsPage() {
                 type="text"
                 value={formState.fullName}
                 onChange={(event) => handleChange("fullName", event.target.value)}
-              />
-            </div>
-            <div className="settings-field">
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                value={formState.email}
-                onChange={(event) => handleChange("email", event.target.value)}
               />
             </div>
             <div className="settings-field">
@@ -443,6 +571,71 @@ export default function SettingsPage() {
           <div className="settings-actions">
             <button className="button primary" type="submit">
               Update your details
+            </button>
+          </div>
+        </form>
+
+        <form className="settings-card" onSubmit={handleEmailSubmit}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "8px",
+            }}
+          >
+            <h3 style={{ margin: 0 }}>Email address</h3>
+            <button
+              className="button"
+              type="button"
+              aria-label="Show email change procedure"
+              title="How email change works"
+              onClick={() => setShowEmailHelpModal(true)}
+              style={{
+                width: "20px",
+                height: "20px",
+                padding: 0,
+                borderRadius: "999px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "12px",
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              i
+            </button>
+          </div>
+          <p>Send a verification link to your new email address.</p>
+          <div className="settings-grid">
+            <div className="settings-field">
+              <label>Current email</label>
+              <input type="email" value={currentEmail} disabled />
+            </div>
+            <div className="settings-field">
+              <label htmlFor="nextEmail">New email</label>
+              <input
+                id="nextEmail"
+                type="email"
+                placeholder="name@example.com"
+                value={emailForm.nextEmail}
+                onChange={(event) =>
+                  setEmailForm((prev) => ({ ...prev, nextEmail: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          {pendingEmail ? (
+            <p className="notice">
+              Pending email change: {pendingEmail}. Verification is required to complete the update.
+            </p>
+          ) : null}
+          {emailNotice ? <p className="notice">{emailNotice}</p> : null}
+          {emailError ? <p className="notice">{emailError}</p> : null}
+          <div className="settings-actions">
+            <button className="button primary" type="submit" disabled={emailSubmitting}>
+              {emailSubmitting ? "Sending..." : "Send verification link"}
             </button>
           </div>
         </form>
@@ -562,6 +755,36 @@ export default function SettingsPage() {
           )}
         </form>
 
+        <div className="settings-card">
+          <h3>Subscription</h3>
+          {billingLoading ? (
+            <p>Loading subscription status...</p>
+          ) : (
+            <>
+              <p>
+                Current plan: <strong>{billingPlanCode}</strong> · Status:{" "}
+                <strong>{billingStatus}</strong>
+              </p>
+              {cancelNotice ? <p className="notice">{cancelNotice}</p> : null}
+              {cancelError ? <p className="notice">{cancelError}</p> : null}
+              <div className="settings-actions">
+                <button
+                  className="button"
+                  type="button"
+                  disabled={
+                    cancelLoading ||
+                    billingPlanCode === "free" ||
+                    ["FREE", "CANCELLED", "CANCELED", "EXPIRED"].includes(billingStatus)
+                  }
+                  onClick={handleCancelSubscription}
+                >
+                  {cancelLoading ? "Cancelling..." : "Cancel PayPal subscription"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="settings-card danger-card">
           <h3>Delete my account</h3>
           <p>
@@ -573,6 +796,36 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+      {showEmailHelpModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <h3>Email Change Procedure</h3>
+                <p className="modal-subtitle">How to complete the update</p>
+              </div>
+              <button
+                className="button"
+                type="button"
+                onClick={() => setShowEmailHelpModal(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: "10px" }}>
+              <p>1. Enter your new email and click Send verification link.</p>
+              <p>2. Open the confirmation email in your new inbox and click the link.</p>
+              <p>
+                3. If secure email change is enabled, also confirm from your current email inbox.
+              </p>
+              <p>4. Return to MorphyGen and refresh or sign in again.</p>
+              <p>
+                5. Email is updated only after all required confirmations are completed.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

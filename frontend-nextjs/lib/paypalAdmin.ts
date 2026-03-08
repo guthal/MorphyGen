@@ -1,13 +1,28 @@
 const paypalEnv = process.env.PAYPAL_ENV || "sandbox";
-const paypalClientId =
-  process.env.PAYPAL_CLIENT_ID || process.env.TEST_PAYPAL_CLIENT_ID || "";
-const paypalSecret =
-  process.env.PAYPAL_SECRET || process.env.TEST_PAYPAL_SECRET || "";
+const isLive = paypalEnv === "live";
+const paypalClientId = isLive
+  ? process.env.PAYPAL_CLIENT_ID || ""
+  : process.env.TEST_PAYPAL_CLIENT_ID || "";
+const paypalSecret = isLive
+  ? process.env.PAYPAL_SECRET || ""
+  : process.env.TEST_PAYPAL_SECRET || "";
+const credentialSource = isLive
+  ? "PAYPAL_CLIENT_ID/PAYPAL_SECRET"
+  : "TEST_PAYPAL_CLIENT_ID/TEST_PAYPAL_SECRET";
 const paypalBaseUrl =
   process.env.PAYPAL_API_BASE ||
   (paypalEnv === "live"
     ? "https://api-m.paypal.com"
     : "https://api-m.sandbox.paypal.com");
+
+if (process.env.NODE_ENV !== "production") {
+  console.log("PayPal env", {
+    paypalEnv,
+    paypalBaseUrl,
+    credentialSource,
+    clientIdSuffix: paypalClientId ? paypalClientId.slice(-6) : null,
+  });
+}
 
 const requireEnv = (value: string, name: string) => {
   if (!value) {
@@ -17,8 +32,14 @@ const requireEnv = (value: string, name: string) => {
 };
 
 export const getPayPalAccessToken = async () => {
-  const clientId = requireEnv(paypalClientId, "TEST_PAYPAL_CLIENT_ID");
-  const secret = requireEnv(paypalSecret, "TEST_PAYPAL_SECRET");
+  const clientId = requireEnv(
+    paypalClientId,
+    isLive ? "PAYPAL_CLIENT_ID" : "TEST_PAYPAL_CLIENT_ID"
+  );
+  const secret = requireEnv(
+    paypalSecret,
+    isLive ? "PAYPAL_SECRET" : "TEST_PAYPAL_SECRET"
+  );
   const auth = Buffer.from(`${clientId}:${secret}`).toString("base64");
 
   const response = await fetch(`${paypalBaseUrl}/v1/oauth2/token`, {
@@ -59,6 +80,10 @@ export const paypalRequest = async <T>(
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`PayPal API error: ${response.status} ${text}`);
+  }
+
+  if (!text) {
+    return {} as T;
   }
 
   return JSON.parse(text) as T;

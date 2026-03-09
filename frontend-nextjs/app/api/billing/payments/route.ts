@@ -52,35 +52,49 @@ export const GET = async (req: NextRequest) => {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const paypalSubscriptionId =
-    subs?.find((row) => Boolean(row.paypal_subscription_id))?.paypal_subscription_id ?? null;
+  const paypalSubscriptionIds = Array.from(
+    new Set(
+      (subs ?? [])
+        .map((row) => row.paypal_subscription_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
   const razorpayCustomerId =
     subs?.find((row) => Boolean(row.razorpay_customer_id))?.razorpay_customer_id ?? null;
 
   const payments: PaymentItem[] = [];
   const { startTime, endTime } = getDateRange(req);
 
-  if (paypalSubscriptionId) {
-    try {
-      const receipts = await getSubscriptionReceipts({
-        subscriptionId: paypalSubscriptionId,
-        startTime,
-        endTime,
-      });
+  if (paypalSubscriptionIds.length > 0) {
+    const seenIds = new Set<string>();
+    for (const subscriptionId of paypalSubscriptionIds) {
+      try {
+        const receipts = await getSubscriptionReceipts({
+          subscriptionId,
+          startTime,
+          endTime,
+        });
 
-      payments.push(
-        ...receipts.map((receipt) => ({
-          id: receipt.id,
-          provider: "paypal" as const,
-          status: receipt.status,
-          amount: receipt.amount,
-          currency: receipt.currency,
-          time: receipt.time || new Date().toISOString(),
-          receiptId: receipt.id,
-        }))
-      );
-    } catch (error) {
-      console.warn("Failed to load PayPal payments", error);
+        payments.push(
+          ...receipts
+            .filter((receipt) => {
+              if (!receipt.id || seenIds.has(receipt.id)) return false;
+              seenIds.add(receipt.id);
+              return true;
+            })
+            .map((receipt) => ({
+              id: receipt.id,
+              provider: "paypal" as const,
+              status: receipt.status,
+              amount: receipt.amount,
+              currency: receipt.currency,
+              time: receipt.time || new Date().toISOString(),
+              receiptId: receipt.id,
+            }))
+        );
+      } catch (error) {
+        console.warn("Failed to load PayPal payments", { subscriptionId, error });
+      }
     }
   }
 

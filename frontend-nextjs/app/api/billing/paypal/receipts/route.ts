@@ -37,24 +37,40 @@ export const GET = async (req: NextRequest) => {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const paypalSubscriptionId =
-    subs?.find((row) => Boolean(row.paypal_subscription_id))?.paypal_subscription_id ?? null;
+  const paypalSubscriptionIds = Array.from(
+    new Set(
+      (subs ?? [])
+        .map((row) => row.paypal_subscription_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
 
-  if (!paypalSubscriptionId) {
+  if (paypalSubscriptionIds.length === 0) {
     return NextResponse.json({ receipts: [] }, { status: 200 });
   }
 
   const { startTime, endTime } = getDateRange(req);
-  let receipts = [] as Awaited<ReturnType<typeof getSubscriptionReceipts>>;
-  try {
-    receipts = await getSubscriptionReceipts({
-      subscriptionId: paypalSubscriptionId,
-      startTime,
-      endTime,
-    });
-  } catch (error) {
-    console.warn("Failed to load PayPal receipts", error);
+  const mergedReceipts = new Map<string, Awaited<ReturnType<typeof getSubscriptionReceipts>>[number]>();
+
+  for (const subscriptionId of paypalSubscriptionIds) {
+    try {
+      const receipts = await getSubscriptionReceipts({
+        subscriptionId,
+        startTime,
+        endTime,
+      });
+      for (const receipt of receipts) {
+        if (!receipt.id) continue;
+        mergedReceipts.set(receipt.id, receipt);
+      }
+    } catch (error) {
+      console.warn("Failed to load PayPal receipts", { subscriptionId, error });
+    }
   }
+
+  const receipts = Array.from(mergedReceipts.values()).sort(
+    (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+  );
 
   return NextResponse.json({ receipts }, { status: 200 });
 };

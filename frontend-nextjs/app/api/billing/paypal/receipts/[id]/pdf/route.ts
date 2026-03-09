@@ -56,20 +56,40 @@ export const GET = async (
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const sub = subs?.find((row) => Boolean(row.paypal_subscription_id)) ?? null;
+  const paypalSubs = (subs ?? []).filter(
+    (row): row is { paypal_subscription_id: string; plan_code: string | null } =>
+      Boolean(row.paypal_subscription_id)
+  );
 
-  if (!sub?.paypal_subscription_id) {
+  if (paypalSubs.length === 0) {
     return NextResponse.json({ error: "No PayPal subscription found" }, { status: 404 });
   }
 
   const { startTime, endTime } = getDateRange(req);
-  const receipts = await getSubscriptionReceipts({
-    subscriptionId: sub.paypal_subscription_id,
-    startTime,
-    endTime,
-  });
+  let receipt: Awaited<ReturnType<typeof getSubscriptionReceipts>>[number] | undefined;
+  let planCode: string | null = null;
 
-  const receipt = receipts.find((item) => item.id === id);
+  for (const sub of paypalSubs) {
+    try {
+      const receipts = await getSubscriptionReceipts({
+        subscriptionId: sub.paypal_subscription_id,
+        startTime,
+        endTime,
+      });
+      const match = receipts.find((item) => item.id === id);
+      if (match) {
+        receipt = match;
+        planCode = sub.plan_code;
+        break;
+      }
+    } catch (error) {
+      console.warn("Failed to load PayPal receipts", {
+        subscriptionId: sub.paypal_subscription_id,
+        error,
+      });
+    }
+  }
+
   if (!receipt) {
     return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
   }
@@ -91,7 +111,7 @@ export const GET = async (
     .filter(Boolean)
     .join(", ");
 
-  const planLabel = PLAN_LABELS[sub.plan_code ?? "free"] ?? "Subscription";
+  const planLabel = PLAN_LABELS[planCode ?? "free"] ?? "Subscription";
   const html = buildReceiptHtml({
     id: receipt.id,
     issuedAt: receipt.time || new Date().toISOString(),

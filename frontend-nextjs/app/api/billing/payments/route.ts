@@ -45,41 +45,49 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: sub } = await supabaseAdmin
+  const { data: subs } = await supabaseAdmin
     .from("subscriptions")
     .select("paypal_subscription_id,razorpay_customer_id")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
+
+  const paypalSubscriptionId =
+    subs?.find((row) => Boolean(row.paypal_subscription_id))?.paypal_subscription_id ?? null;
+  const razorpayCustomerId =
+    subs?.find((row) => Boolean(row.razorpay_customer_id))?.razorpay_customer_id ?? null;
 
   const payments: PaymentItem[] = [];
   const { startTime, endTime } = getDateRange(req);
 
-  if (sub?.paypal_subscription_id) {
-    const receipts = await getSubscriptionReceipts({
-      subscriptionId: sub.paypal_subscription_id,
-      startTime,
-      endTime,
-    });
+  if (paypalSubscriptionId) {
+    try {
+      const receipts = await getSubscriptionReceipts({
+        subscriptionId: paypalSubscriptionId,
+        startTime,
+        endTime,
+      });
 
-    payments.push(
-      ...receipts.map((receipt) => ({
-        id: receipt.id,
-        provider: "paypal" as const,
-        status: receipt.status,
-        amount: receipt.amount,
-        currency: receipt.currency,
-        time: receipt.time || new Date().toISOString(),
-        receiptId: receipt.id,
-      }))
-    );
+      payments.push(
+        ...receipts.map((receipt) => ({
+          id: receipt.id,
+          provider: "paypal" as const,
+          status: receipt.status,
+          amount: receipt.amount,
+          currency: receipt.currency,
+          time: receipt.time || new Date().toISOString(),
+          receiptId: receipt.id,
+        }))
+      );
+    } catch (error) {
+      console.warn("Failed to load PayPal payments", error);
+    }
   }
 
-  if (sub?.razorpay_customer_id) {
+  if (razorpayCustomerId) {
     const { authHeader } = getRazorpayAuthHeader();
     const url = new URL("https://api.razorpay.com/v1/invoices");
-    url.searchParams.set("customer_id", sub.razorpay_customer_id);
+    url.searchParams.set("customer_id", razorpayCustomerId);
     url.searchParams.set("count", "20");
 
     const response = await fetch(url.toString(), {

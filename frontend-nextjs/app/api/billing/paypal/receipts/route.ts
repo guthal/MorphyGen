@@ -30,24 +30,31 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: sub } = await supabaseAdmin
+  const { data: subs } = await supabaseAdmin
     .from("subscriptions")
     .select("paypal_subscription_id")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
 
-  if (!sub?.paypal_subscription_id) {
+  const paypalSubscriptionId =
+    subs?.find((row) => Boolean(row.paypal_subscription_id))?.paypal_subscription_id ?? null;
+
+  if (!paypalSubscriptionId) {
     return NextResponse.json({ receipts: [] }, { status: 200 });
   }
 
   const { startTime, endTime } = getDateRange(req);
-  const receipts = await getSubscriptionReceipts({
-    subscriptionId: sub.paypal_subscription_id,
-    startTime,
-    endTime,
-  });
+  let receipts = [] as Awaited<ReturnType<typeof getSubscriptionReceipts>>;
+  try {
+    receipts = await getSubscriptionReceipts({
+      subscriptionId: paypalSubscriptionId,
+      startTime,
+      endTime,
+    });
+  } catch (error) {
+    console.warn("Failed to load PayPal receipts", error);
+  }
 
   return NextResponse.json({ receipts }, { status: 200 });
 };

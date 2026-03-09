@@ -12,7 +12,6 @@ const navItems = [
   { label: "Invoices", href: "/dashboard/invoices" },
   { label: "Settings", href: "/dashboard/settings" },
   { label: "Documentation", href: "/dashboard/docs" },
-  { label: "Admin", href: "/dashboard/admin/paypal" },
 ];
 
 export default function DashboardLayout({
@@ -23,6 +22,7 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [email, setEmail] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const isDocs = pathname === "/dashboard/docs";
 
@@ -30,23 +30,48 @@ export default function DashboardLayout({
     let isMounted = true;
 
     const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
+      try {
+        const { data } = await supabase.auth.getSession();
 
-      if (!isMounted) return;
+        if (!isMounted) return;
 
-      if (!data.session) {
+        if (!data.session) {
+          router.push("/login");
+          return;
+        }
+
+        if (!data.session.user.email_confirmed_at) {
+          await supabase.auth.signOut();
+          router.push("/verify-email");
+          return;
+        }
+
+        const userEmail = data.session.user.email ?? null;
+        const token = data.session.access_token;
+        let userIsAdmin = false;
+
+        if (token) {
+          const adminResponse = await fetch("/api/admin/status", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (adminResponse.ok) {
+            const body = (await adminResponse.json()) as { isAdmin?: boolean };
+            userIsAdmin = Boolean(body.isAdmin);
+          }
+        }
+
+        if (pathname.startsWith("/dashboard/admin") && !userIsAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+
+        setEmail(userEmail);
+        setIsAdmin(userIsAdmin);
+        setLoading(false);
+      } catch {
+        if (!isMounted) return;
         router.push("/login");
-        return;
       }
-
-      if (!data.session.user.email_confirmed_at) {
-        await supabase.auth.signOut();
-        router.push("/verify-email");
-        return;
-      }
-
-      setEmail(data.session.user.email ?? null);
-      setLoading(false);
     };
 
     loadSession();
@@ -54,7 +79,7 @@ export default function DashboardLayout({
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [pathname, router]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -78,7 +103,7 @@ export default function DashboardLayout({
             <div className="sidebar-subtitle">{email ?? "Signed in"}</div>
           </div>
           <nav className="sidebar-nav">
-            {navItems.map((item) => (
+            {[...navItems, ...(isAdmin ? [{ label: "Admin", href: "/dashboard/admin/paypal" }] : [])].map((item) => (
               <a
                 key={item.href}
                 href={item.href}

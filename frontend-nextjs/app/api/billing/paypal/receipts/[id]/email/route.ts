@@ -59,13 +59,14 @@ export const POST = async (
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: sub } = await supabaseAdmin
+  const { data: subs } = await supabaseAdmin
     .from("subscriptions")
     .select("paypal_subscription_id,plan_code")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
+
+  const sub = subs?.find((row) => Boolean(row.paypal_subscription_id)) ?? null;
 
   if (!sub?.paypal_subscription_id) {
     return NextResponse.json({ error: "No PayPal subscription found" }, { status: 404 });

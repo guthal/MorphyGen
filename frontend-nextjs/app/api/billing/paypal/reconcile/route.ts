@@ -8,7 +8,11 @@ export const runtime = "nodejs";
 type PlanMap = Record<string, string>;
 
 const parsePlanMap = () => {
-  const raw = process.env.PAYPAL_PLAN_MAP || process.env.PAYPAL_PLAN_MAP_SANDBOX || "";
+  const paypalEnv = process.env.PAYPAL_ENV || "sandbox";
+  const raw =
+    paypalEnv === "live"
+      ? process.env.PAYPAL_PLAN_MAP || ""
+      : process.env.PAYPAL_PLAN_MAP_SANDBOX || process.env.PAYPAL_PLAN_MAP || "";
   if (!raw) return {};
   try {
     return JSON.parse(raw) as PlanMap;

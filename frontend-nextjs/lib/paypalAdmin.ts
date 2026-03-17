@@ -31,6 +31,29 @@ const requireEnv = (value: string, name: string) => {
   return value;
 };
 
+export class PayPalApiError extends Error {
+  status: number;
+  body: string;
+
+  constructor(status: number, body: string) {
+    super(`PayPal API error: ${status} ${body}`);
+    this.name = "PayPalApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+export const isPayPalResourceNotFoundError = (error: unknown) => {
+  if (!(error instanceof PayPalApiError) || error.status !== 404) {
+    return false;
+  }
+
+  return (
+    error.body.includes('"name":"RESOURCE_NOT_FOUND"') ||
+    error.body.includes('"issue":"INVALID_RESOURCE_ID"')
+  );
+};
+
 export const getPayPalAccessToken = async () => {
   const clientId = requireEnv(
     paypalClientId,
@@ -79,7 +102,7 @@ export const paypalRequest = async <T>(
 
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`PayPal API error: ${response.status} ${text}`);
+    throw new PayPalApiError(response.status, text);
   }
 
   if (!text) {
@@ -114,7 +137,7 @@ export const paypalGet = async <T>(
 
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`PayPal API error: ${response.status} ${text}`);
+    throw new PayPalApiError(response.status, text);
   }
 
   return JSON.parse(text) as T;

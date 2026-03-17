@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getUserFromRequest } from "@/lib/supabaseAuth";
 import { getSubscriptionReceipts } from "@/lib/paypalReceipts";
+import { isPayPalResourceNotFoundError } from "@/lib/paypalAdmin";
 import { getRazorpayAuthHeader } from "@/lib/razorpay";
 
 export const runtime = "nodejs";
@@ -93,6 +94,12 @@ export const GET = async (req: NextRequest) => {
             }))
         );
       } catch (error) {
+        if (isPayPalResourceNotFoundError(error)) {
+          console.warn("Skipping stale PayPal subscription while loading payments", {
+            subscriptionId,
+          });
+          continue;
+        }
         console.warn("Failed to load PayPal payments", { subscriptionId, error });
       }
     }

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUserFromRequest } from "@/lib/supabaseAuth";
-import { paypalGet } from "@/lib/paypalAdmin";
+import { isPayPalResourceNotFoundError, paypalGet } from "@/lib/paypalAdmin";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -74,9 +74,23 @@ export const POST = async (req: NextRequest) => {
   const existingForTarget =
     existing?.find((row) => row.paypal_subscription_id === targetSubscriptionId) ?? null;
 
-  const subscription = await paypalGet<Record<string, any>>(
-    `/v1/billing/subscriptions/${targetSubscriptionId}`
-  );
+  let subscription: Record<string, any>;
+  try {
+    subscription = await paypalGet<Record<string, any>>(
+      `/v1/billing/subscriptions/${targetSubscriptionId}`
+    );
+  } catch (error) {
+    if (isPayPalResourceNotFoundError(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "PayPal subscription not found. The stored subscription id is stale or belongs to a different PayPal environment.",
+        },
+        { status: 404 }
+      );
+    }
+    throw error;
+  }
 
   const ownerUserId = (subscription.custom_id as string | undefined) ?? user.id;
   if (ownerUserId !== user.id) {

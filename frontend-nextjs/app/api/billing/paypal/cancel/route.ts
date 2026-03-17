@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUserFromRequest } from "@/lib/supabaseAuth";
-import { paypalRequest } from "@/lib/paypalAdmin";
+import { isPayPalResourceNotFoundError, paypalRequest } from "@/lib/paypalAdmin";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -52,6 +52,15 @@ export const POST = async (req: NextRequest) => {
       { reason }
     );
   } catch (error) {
+    if (isPayPalResourceNotFoundError(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "PayPal subscription not found. The stored subscription id is stale or belongs to a different PayPal environment.",
+        },
+        { status: 404 }
+      );
+    }
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to cancel PayPal subscription",

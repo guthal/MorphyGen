@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { paypalGet, paypalRequest } from "@/lib/paypalAdmin";
+import { getPayPalConfigSnapshot, logPayPalEvent, paypalGet, paypalRequest } from "@/lib/paypalAdmin";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -22,11 +22,21 @@ const normalizeStatus = (value: string | undefined) => {
 };
 
 export const POST = async (req: NextRequest) => {
+  const requestId = crypto.randomUUID();
   const rawBody = await req.text();
   let event: Record<string, unknown> = {};
   try {
     event = JSON.parse(rawBody);
   } catch {
+    logPayPalEvent(
+      "PayPal webhook received invalid JSON",
+      {
+        route: "api.billing.paypal.webhook",
+        requestId,
+        bodyLength: rawBody.length,
+      },
+      "warn"
+    );
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
@@ -36,7 +46,29 @@ export const POST = async (req: NextRequest) => {
   const authAlgo = getHeader(req, "paypal-auth-algo");
   const transmissionSig = getHeader(req, "paypal-transmission-sig");
 
+  logPayPalEvent("PayPal webhook received", {
+    route: "api.billing.paypal.webhook",
+    requestId,
+    eventType: String(event.event_type || "unknown"),
+    eventId: String(event.id || "unknown"),
+    bodyLength: rawBody.length,
+    hasTransmissionId: Boolean(transmissionId),
+    hasTransmissionTime: Boolean(transmissionTime),
+    hasCertUrl: Boolean(certUrl),
+    hasAuthAlgo: Boolean(authAlgo),
+    hasTransmissionSig: Boolean(transmissionSig),
+    config: getPayPalConfigSnapshot(),
+  });
+
   if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) {
+    logPayPalEvent(
+      "PayPal webhook missing verification headers",
+      {
+        route: "api.billing.paypal.webhook",
+        requestId,
+      },
+      "warn"
+    );
     return NextResponse.json({ error: "Missing PayPal headers" }, { status: 400 });
   }
 
@@ -54,8 +86,23 @@ export const POST = async (req: NextRequest) => {
   );
 
   if (verification?.verification_status !== "SUCCESS") {
+    logPayPalEvent(
+      "PayPal webhook signature verification failed",
+      {
+        route: "api.billing.paypal.webhook",
+        requestId,
+        verificationStatus: verification?.verification_status ?? null,
+      },
+      "warn"
+    );
     return NextResponse.json({ error: "Webhook signature invalid" }, { status: 400 });
   }
+
+  logPayPalEvent("PayPal webhook signature verified", {
+    route: "api.billing.paypal.webhook",
+    requestId,
+    verificationStatus: verification?.verification_status ?? null,
+  });
 
   const eventType = String(event.event_type || "unknown");
   const eventId = String(event.id || "unknown");
@@ -77,13 +124,28 @@ export const POST = async (req: NextRequest) => {
 
   let existingByProviderId: { id: string; user_id: string } | null = null;
   if (subscriptionId) {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("subscriptions")
       .select("id,user_id")
       .eq("paypal_subscription_id", subscriptionId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (error) {
+      logPayPalEvent(
+        "PayPal webhook failed to load subscription by provider id",
+        {
+          route: "api.billing.paypal.webhook",
+          requestId,
+          subscriptionId,
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        },
+        "error"
+      );
+      return NextResponse.json({ error: "Failed to query subscription", requestId }, { status: 500 });
+    }
     existingByProviderId = data;
     userId = userId ?? data?.user_id;
   }
@@ -100,13 +162,31 @@ export const POST = async (req: NextRequest) => {
       nextBilling =
         nextBilling ?? (subscription.billing_info?.next_billing_time as string | undefined);
     } catch (error) {
-      console.warn("Failed to resolve PayPal subscription details", error);
+      logPayPalEvent(
+        "PayPal webhook failed to enrich subscription from PayPal API",
+        {
+          route: "api.billing.paypal.webhook",
+          requestId,
+          subscriptionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "warn"
+      );
     }
   }
 
-  console.log("PayPal webhook received", {
+  logPayPalEvent("PayPal webhook normalized event", {
+    route: "api.billing.paypal.webhook",
+    requestId,
     eventType,
     eventId,
+    userId: userId ?? null,
+    subscriptionId: subscriptionId ?? null,
+    planId: planId ?? null,
+    status: status ?? null,
+    currentPeriodStart: startTime ?? null,
+    currentPeriodEnd: nextBilling ?? null,
+    matchedExistingSubscription: Boolean(existingByProviderId?.id),
   });
 
   if (
@@ -125,12 +205,31 @@ export const POST = async (req: NextRequest) => {
     };
 
     if (existingByProviderId?.id) {
-      await supabaseAdmin
+      const { error } = await supabaseAdmin
         .from("subscriptions")
         .update(updatePayload)
         .eq("id", existingByProviderId.id);
+      if (error) {
+        logPayPalEvent(
+          "PayPal webhook failed to update subscription row",
+          {
+            route: "api.billing.paypal.webhook",
+            requestId,
+            userId,
+            subscriptionId,
+            error: error.message,
+            code: error.code,
+            details: error.details,
+          },
+          "error"
+        );
+        return NextResponse.json(
+          { error: "Failed to update subscription from webhook", requestId },
+          { status: 500 }
+        );
+      }
     } else {
-      const { data: existingByUser } = await supabaseAdmin
+      const { data: existingByUser, error: existingByUserError } = await supabaseAdmin
         .from("subscriptions")
         .select("id")
         .eq("user_id", userId)
@@ -138,41 +237,158 @@ export const POST = async (req: NextRequest) => {
         .limit(1)
         .maybeSingle();
 
+      if (existingByUserError) {
+        logPayPalEvent(
+          "PayPal webhook failed to load fallback subscription by user",
+          {
+            route: "api.billing.paypal.webhook",
+            requestId,
+            userId,
+            subscriptionId,
+            error: existingByUserError.message,
+            code: existingByUserError.code,
+            details: existingByUserError.details,
+          },
+          "error"
+        );
+        return NextResponse.json(
+          { error: "Failed to resolve user subscription from webhook", requestId },
+          { status: 500 }
+        );
+      }
+
       if (existingByUser?.id) {
-        await supabaseAdmin.from("subscriptions").update(updatePayload).eq("id", existingByUser.id);
+        const { error } = await supabaseAdmin
+          .from("subscriptions")
+          .update(updatePayload)
+          .eq("id", existingByUser.id);
+        if (error) {
+          logPayPalEvent(
+            "PayPal webhook failed to update fallback subscription row",
+            {
+              route: "api.billing.paypal.webhook",
+              requestId,
+              userId,
+              subscriptionId,
+              error: error.message,
+              code: error.code,
+              details: error.details,
+            },
+            "error"
+          );
+          return NextResponse.json(
+            { error: "Failed to update user subscription from webhook", requestId },
+            { status: 500 }
+          );
+        }
       } else {
-        await supabaseAdmin.from("subscriptions").insert({
+        const { error } = await supabaseAdmin.from("subscriptions").insert({
           user_id: userId,
           ...updatePayload,
           created_at: now,
         });
+        if (error) {
+          logPayPalEvent(
+            "PayPal webhook failed to insert subscription row",
+            {
+              route: "api.billing.paypal.webhook",
+              requestId,
+              userId,
+              subscriptionId,
+              error: error.message,
+              code: error.code,
+              details: error.details,
+            },
+            "error"
+          );
+          return NextResponse.json(
+            { error: "Failed to create subscription from webhook", requestId },
+            { status: 500 }
+          );
+        }
       }
     }
 
     if (startTime && nextBilling) {
-      await supabaseAdmin.from("credit_usage_cycles").upsert({
+      const { error } = await supabaseAdmin.from("credit_usage_cycles").upsert({
         user_id: userId,
         subscription_id: subscriptionId,
         period_start: startTime,
         period_end: nextBilling,
         updated_at: now,
       });
+      if (error) {
+        logPayPalEvent(
+          "PayPal webhook failed to upsert credit cycle",
+          {
+            route: "api.billing.paypal.webhook",
+            requestId,
+            userId,
+            subscriptionId,
+            error: error.message,
+            code: error.code,
+            details: error.details,
+          },
+          "error"
+        );
+        return NextResponse.json(
+          { error: "Failed to sync billing cycle from webhook", requestId },
+          { status: 500 }
+        );
+      }
     }
 
-    await supabaseAdmin.from("payment_events").insert({
+    const { error } = await supabaseAdmin.from("payment_events").insert({
       user_id: userId,
       provider: "paypal",
       event_type: eventType,
       event_id: eventId,
       payload: event,
     });
-  } else {
-    console.warn("PayPal webhook skipped DB sync", {
+    if (error) {
+      logPayPalEvent(
+        "PayPal webhook failed to insert payment event",
+        {
+          route: "api.billing.paypal.webhook",
+          requestId,
+          userId,
+          subscriptionId,
+          eventType,
+          eventId,
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        },
+        "error"
+      );
+      return NextResponse.json(
+        { error: "Failed to persist webhook event", requestId },
+        { status: 500 }
+      );
+    }
+
+    logPayPalEvent("PayPal webhook DB sync succeeded", {
+      route: "api.billing.paypal.webhook",
+      requestId,
+      userId,
+      subscriptionId,
       eventType,
       eventId,
-      hasUserId: Boolean(userId),
-      hasSubscriptionId: Boolean(subscriptionId),
+      status: normalizeStatus(status),
     });
+  } else {
+    logPayPalEvent(
+      "PayPal webhook skipped DB sync",
+      {
+        route: "api.billing.paypal.webhook",
+        requestId,
+        eventType,
+        eventId,
+        hasUserId: Boolean(userId),
+        hasSubscriptionId: Boolean(subscriptionId),
+      },
+      "warn"
+    );
   }
 
   return NextResponse.json({ received: true }, { status: 200 });

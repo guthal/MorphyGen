@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUserFromRequest } from "@/lib/supabaseAuth";
-import { isPayPalResourceNotFoundError, paypalGet } from "@/lib/paypalAdmin";
+import {
+  getPayPalConfigSnapshot,
+  isPayPalResourceNotFoundError,
+  logPayPalEvent,
+  paypalGet,
+} from "@/lib/paypalAdmin";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -16,7 +21,17 @@ const parsePlanMap = () => {
   if (!raw) return {};
   try {
     return JSON.parse(raw) as PlanMap;
-  } catch {
+  } catch (error) {
+    logPayPalEvent(
+      "PayPal reconcile plan map JSON is invalid",
+      {
+        route: "api.billing.paypal.reconcile",
+        paypalEnv,
+        rawLength: raw.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "error"
+    );
     return {};
   }
 };
@@ -39,8 +54,17 @@ const normalizeStatus = (value: string | undefined) => {
 };
 
 export const POST = async (req: NextRequest) => {
+  const requestId = crypto.randomUUID();
   const user = await getUserFromRequest(req);
   if (!user) {
+    logPayPalEvent(
+      "PayPal reconcile request unauthorized",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+      },
+      "warn"
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -52,12 +76,39 @@ export const POST = async (req: NextRequest) => {
   }
 
   const requestedSubscriptionId = payload.subscriptionId?.trim();
-  const { data: existing } = await supabaseAdmin
+  logPayPalEvent("PayPal reconcile request starting", {
+    route: "api.billing.paypal.reconcile",
+    requestId,
+    userId: user.id,
+    requestedSubscriptionId,
+    config: getPayPalConfigSnapshot(),
+  });
+
+  const { data: existing, error: existingError } = await supabaseAdmin
     .from("subscriptions")
     .select("id,paypal_subscription_id,plan_code")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(20);
+
+  if (existingError) {
+    logPayPalEvent(
+      "PayPal reconcile failed to load existing subscriptions",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+        userId: user.id,
+        error: existingError.message,
+        code: existingError.code,
+        details: existingError.details,
+      },
+      "error"
+    );
+    return NextResponse.json(
+      { error: "Failed to load existing PayPal subscriptions", requestId },
+      { status: 500 }
+    );
+  }
 
   const targetSubscriptionId =
     requestedSubscriptionId ||
@@ -65,6 +116,16 @@ export const POST = async (req: NextRequest) => {
     null;
 
   if (!targetSubscriptionId) {
+    logPayPalEvent(
+      "PayPal reconcile could not find target subscription id",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+        userId: user.id,
+        existingCount: existing?.length ?? 0,
+      },
+      "warn"
+    );
     return NextResponse.json(
       { error: "No PayPal subscription found for this user" },
       { status: 404 }
@@ -81,6 +142,16 @@ export const POST = async (req: NextRequest) => {
     );
   } catch (error) {
     if (isPayPalResourceNotFoundError(error)) {
+      logPayPalEvent(
+        "PayPal reconcile subscription not found in PayPal",
+        {
+          route: "api.billing.paypal.reconcile",
+          requestId,
+          userId: user.id,
+          targetSubscriptionId,
+        },
+        "warn"
+      );
       return NextResponse.json(
         {
           error:
@@ -89,11 +160,33 @@ export const POST = async (req: NextRequest) => {
         { status: 404 }
       );
     }
+    logPayPalEvent(
+      "PayPal reconcile fetch failed",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+        userId: user.id,
+        targetSubscriptionId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "error"
+    );
     throw error;
   }
 
   const ownerUserId = (subscription.custom_id as string | undefined) ?? user.id;
   if (ownerUserId !== user.id) {
+    logPayPalEvent(
+      "PayPal reconcile ownership mismatch",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+        userId: user.id,
+        ownerUserId,
+        targetSubscriptionId,
+      },
+      "warn"
+    );
     return NextResponse.json({ error: "Subscription does not belong to user" }, { status: 403 });
   }
 
@@ -114,31 +207,123 @@ export const POST = async (req: NextRequest) => {
   };
 
   if (existingForTarget?.id) {
-    await supabaseAdmin.from("subscriptions").update(updatePayload).eq("id", existingForTarget.id);
+    const { error: updateError } = await supabaseAdmin
+      .from("subscriptions")
+      .update(updatePayload)
+      .eq("id", existingForTarget.id);
+    if (updateError) {
+      logPayPalEvent(
+        "PayPal reconcile failed to update subscription row",
+        {
+          route: "api.billing.paypal.reconcile",
+          requestId,
+          userId: user.id,
+          targetSubscriptionId,
+          error: updateError.message,
+          code: updateError.code,
+          details: updateError.details,
+        },
+        "error"
+      );
+      return NextResponse.json(
+        { error: "Failed to update PayPal subscription", requestId },
+        { status: 500 }
+      );
+    }
   } else {
-    await supabaseAdmin.from("subscriptions").insert({
+    const { error: insertError } = await supabaseAdmin.from("subscriptions").insert({
       user_id: user.id,
       ...updatePayload,
       created_at: now,
     });
+    if (insertError) {
+      logPayPalEvent(
+        "PayPal reconcile failed to insert subscription row",
+        {
+          route: "api.billing.paypal.reconcile",
+          requestId,
+          userId: user.id,
+          targetSubscriptionId,
+          error: insertError.message,
+          code: insertError.code,
+          details: insertError.details,
+        },
+        "error"
+      );
+      return NextResponse.json(
+        { error: "Failed to create PayPal subscription", requestId },
+        { status: 500 }
+      );
+    }
   }
 
   if (startTime && nextBilling) {
-    await supabaseAdmin.from("credit_usage_cycles").upsert({
+    const { error: cycleError } = await supabaseAdmin.from("credit_usage_cycles").upsert({
       user_id: user.id,
       subscription_id: targetSubscriptionId,
       period_start: startTime,
       period_end: nextBilling,
       updated_at: now,
     });
+    if (cycleError) {
+      logPayPalEvent(
+        "PayPal reconcile failed to upsert credit cycle",
+        {
+          route: "api.billing.paypal.reconcile",
+          requestId,
+          userId: user.id,
+          targetSubscriptionId,
+          error: cycleError.message,
+          code: cycleError.code,
+          details: cycleError.details,
+        },
+        "error"
+      );
+      return NextResponse.json(
+        { error: "Failed to sync PayPal billing cycle", requestId },
+        { status: 500 }
+      );
+    }
   }
 
-  await supabaseAdmin.from("payment_events").insert({
+  const { error: eventError } = await supabaseAdmin.from("payment_events").insert({
     user_id: user.id,
     provider: "paypal",
     event_type: "BILLING.SUBSCRIPTION.RECONCILED",
     event_id: targetSubscriptionId,
     payload: subscription,
+  });
+
+  if (eventError) {
+    logPayPalEvent(
+      "PayPal reconcile failed to insert payment event",
+      {
+        route: "api.billing.paypal.reconcile",
+        requestId,
+        userId: user.id,
+        targetSubscriptionId,
+        error: eventError.message,
+        code: eventError.code,
+        details: eventError.details,
+      },
+      "error"
+    );
+    return NextResponse.json(
+      { error: "Failed to persist PayPal event", requestId },
+      { status: 500 }
+    );
+  }
+
+  logPayPalEvent("PayPal reconcile request succeeded", {
+    route: "api.billing.paypal.reconcile",
+    requestId,
+    userId: user.id,
+    targetSubscriptionId,
+    status,
+    planId: planId ?? null,
+    planCode,
+    currentPeriodStart: startTime ?? null,
+    currentPeriodEnd: nextBilling ?? null,
   });
 
   return NextResponse.json(

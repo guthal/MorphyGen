@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 
 type PlanMap = Record<string, string>;
 
+const PAYPAL_PLAN_ID_PATTERN = /^P-[A-Z0-9]+$/i;
+
 const parsePlanMap = () => {
   const paypalEnv = process.env.PAYPAL_ENV || "sandbox";
   const raw =
@@ -68,7 +70,8 @@ export const POST = async (req: NextRequest) => {
   }
 
   const map = parsePlanMap();
-  const planId = map[planCode] || planCode;
+  const mappedPlanId = map[planCode];
+  const planId = mappedPlanId || (PAYPAL_PLAN_ID_PATTERN.test(planCode) ? planCode : "");
   const planMapSource =
     (process.env.PAYPAL_ENV || "sandbox") === "live"
       ? "PAYPAL_PLAN_MAP"
@@ -83,6 +86,7 @@ export const POST = async (req: NextRequest) => {
     userEmail: user.email ?? null,
     planCode,
     resolvedPlanId: planId,
+    usedMappedPlanId: Boolean(mappedPlanId),
     planMapSource,
     planMapKeys: Object.keys(map),
   });
@@ -90,18 +94,25 @@ export const POST = async (req: NextRequest) => {
   try {
     if (!planId) {
       logPayPalEvent(
-        "PayPal subscription request could not resolve plan id",
+        "PayPal subscription request could not resolve mapped plan id",
         {
           route: "api.billing.paypal.subscription",
           requestId,
           userId: user.id,
           planCode,
           planMapSource,
+          availablePlanCodes: Object.keys(map),
           config: getPayPalConfigSnapshot(),
         },
         "error"
       );
-      return NextResponse.json({ error: "Plan id not found" }, { status: 400 });
+      return NextResponse.json(
+        {
+          error:
+            "PayPal plan is not configured for this plan code. Check PAYPAL_PLAN_MAP/PAYPAL_PLAN_MAP_SANDBOX and restart the dev server.",
+        },
+        { status: 400 }
+      );
     }
 
     const data = await paypalRequest<{

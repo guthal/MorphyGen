@@ -12,7 +12,6 @@ type Plan = {
   bestFor: string;
   code: string;
   highlight?: boolean;
-  paypalPlanId?: string;
 };
 
 const PLANS: Plan[] = [
@@ -31,7 +30,6 @@ const PLANS: Plan[] = [
     overage: "$0.02 / credit overage",
     bestFor: "Small apps & side projects",
     code: "starter",
-    paypalPlanId: "P-0XY03120C1232724FNGJA4CI",
   },
   {
     name: "Boost ⭐",
@@ -41,7 +39,6 @@ const PLANS: Plan[] = [
     bestFor: "Growing products & startups",
     highlight: true,
     code: "boost",
-    paypalPlanId: "P-1GT40783XG644073RNGJBD7I",
   },
   {
     name: "Growth",
@@ -50,7 +47,6 @@ const PLANS: Plan[] = [
     overage: "$0.0125 / credit overage",
     bestFor: "Production workloads",
     code: "growth",
-    paypalPlanId: "P-4MB78084NA7584847NGJBEFQ",
   },
   {
     name: "Scale 25K",
@@ -420,7 +416,7 @@ export default function PricingPage() {
             </div>
             {selectedPlan.code === "free" ? (
               <p>This plan is included by default.</p>
-            ) : selectedPlan.paypalPlanId && paypalReady ? (
+            ) : paypalReady ? (
               <div className="modal-checkout">
                 <div>
                   <h4>PayPal</h4>
